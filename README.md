@@ -10,6 +10,10 @@ Straight IMAP, so Gmail (via app password) and any other account go through one
 code path. All mailboxes are polled in parallel; one broken account shows an
 error next to its name and leaves the others alone.
 
+<p align="center">
+  <img src="preview.png" alt="The panel: a heading reading Mail, 3 unread across 3 mailboxes, a list of mailboxes on the left with their individual counts, and the selected mailbox's unread message on the right with sender, subject and time" width="660">
+</p>
+
 ## Install
 
 ```bash
