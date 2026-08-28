@@ -109,6 +109,16 @@ otherwise be readable in `/proc` by every process on the machine, and the rule
 that keeps passwords off the command line applies just as much to what you
 wrote.
 
+## Opening it without the mouse
+
+The panel registers an IPC target, so it can be opened from a key binding or a
+script:
+
+```bash
+omarchy shell themo.mail-inbox toggle    # also: open, close, show, hide
+omarchy shell themo.mail-inbox refresh   # poll every mailbox now
+```
+
 ## Widget settings
 
 | Setting | Default | Meaning |

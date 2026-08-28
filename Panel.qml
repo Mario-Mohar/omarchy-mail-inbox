@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -61,6 +62,20 @@ Panel {
   function open() { root.controller.show(); refresh() }
   function close() { closeDetail(); root.controller.hide() }
   function toggle() { root.opened ? root.close() : root.open() }
+
+  // Lets the panel be opened from a key binding or a script, the way the other
+  // Omarchy panels can be. manageIpc is false because the Panel base type does
+  // not register the target itself, so this block does it.
+  //   omarchy shell themo.mail-inbox toggle
+  IpcHandler {
+    target: root.ipcTarget
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function refresh(): string { root.refresh(); return "ok" }
+  }
   function refresh() { if (service) service.refresh() }
 
   function openDetail(uid) {
