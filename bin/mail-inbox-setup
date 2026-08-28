@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Asks for the password of every configured account and tests the connection.
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ACCOUNTS="$HOME/.config/omarchy/mail-inbox/accounts.json"
+
+echo "Omarchy Mail Inbox — store passwords"
+echo
+
+mapfile -t IDS < <(python3 -c "
+import json
+d=json.load(open('$ACCOUNTS'))
+for a in d['accounts']: print(a['id'], a['user'], sep='\t')
+")
+
+for line in "${IDS[@]}"; do
+  id="${line%%$'\t'*}"; user="${line#*$'\t'}"
+  if secret-tool lookup service omarchy-mail-inbox account "$id" 2>/dev/null | grep -q .; then
+    echo "✓ $id ($user) — already in the keyring, skipping."
+    continue
+  fi
+  echo "── $id — $user"
+  [ "$id" = "gmail" ] && echo "   Gmail needs an app password: https://myaccount.google.com/apppasswords"
+  secret-tool store --label "Omarchy Mail Inbox: $id" service omarchy-mail-inbox account "$id"
+  echo
+done
+
+echo "Testing connections…"
+echo
+for line in "${IDS[@]}"; do
+  id="${line%%$'\t'*}"
+  printf '%-10s ' "$id"
+  "$HERE/mail-inbox-account" test "$id" 2>&1 | head -1
+done
+echo
+read -r -p "Done. Press Enter to close. " _

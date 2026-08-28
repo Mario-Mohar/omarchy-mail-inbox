@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""Send a reply. The whole request arrives as one JSON object on stdin.
+
+stdin, not argv: the reply body would otherwise be visible in /proc to every
+process on the machine, and the same rule that keeps passwords off the
+command line applies to what the user wrote.
+
+Request fields: account, to[], cc[], subject, body, inReplyTo, references,
+uid (the message being answered), markAnswered, markSeen.
+"""
+import email.message
+import email.utils
+import imaplib
+import json
+import os
+import smtplib
+import socket
+import ssl
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import (AccountError, close, connect, die, emit, require_account,
+                        require_password)
+
+MAX_BODY_CHARS = 200000
+
+
+def as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [p.strip() for p in value.split(",") if p.strip()]
+    return [str(v).strip() for v in value if str(v).strip()]
+
+
+def build(account, request):
+    to = as_list(request.get("to"))
+    cc = as_list(request.get("cc"))
+    if not to:
+        die("no recipient")
+
+    body = str(request.get("body", ""))
+    if not body.strip():
+        die("the reply is empty")
+    if len(body) > MAX_BODY_CHARS:
+        die("reply is too long")
+
+    sender = str(account.get("from") or account.get("user") or "").strip()
+    if not sender:
+        die("account has no From address")
+
+    message = email.message.EmailMessage()
+    message["From"] = (email.utils.formataddr((str(account["fromName"]), sender))
+                       if account.get("fromName") else sender)
+    message["To"] = ", ".join(to)
+    if cc:
+        message["Cc"] = ", ".join(cc)
+    message["Subject"] = str(request.get("subject", "")).strip() or "(no subject)"
+    message["Date"] = email.utils.formatdate(localtime=True)
+    domain = sender.split("@")[-1] or None
+    message["Message-ID"] = email.utils.make_msgid(domain=domain)
+
+    # Threading: without these the reply starts a new conversation in the
+    # recipient's client instead of landing under the original.
+    in_reply_to = str(request.get("inReplyTo", "")).strip()
+    references = str(request.get("references", "")).strip()
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+    if references:
+        message["References"] = references
+
+    message.set_content(body, subtype="plain", charset="utf-8")
+    return message, to + cc
+
+
+def transmit(account, message, recipients):
+    host = str(account.get("smtpHost", "")).strip()
+    if not host:
+        die("account has no smtpHost — add it to accounts.json")
+    port = int(account.get("smtpPort", 465) or 465)
+    mode = str(account.get("smtpMode", "ssl")).strip().lower()
+    user = str(account.get("smtpUser") or account.get("user") or "").strip()
+    password = require_password(str(account.get("id", "")))
+    context = ssl.create_default_context()
+
+    server = None
+    try:
+        if mode == "starttls":
+            server = smtplib.SMTP(host, port or 587, timeout=30)
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
+        else:
+            server = smtplib.SMTP_SSL(host, port or 465, timeout=30, context=context)
+        server.login(user, password)
+        server.send_message(message, from_addr=None, to_addrs=recipients)
+    except smtplib.SMTPAuthenticationError:
+        die("SMTP login rejected — check the app password")
+    except smtplib.SMTPRecipientsRefused as exc:
+        die("recipient refused: %s" % ", ".join(sorted(exc.recipients))[:150])
+    except smtplib.SMTPException as exc:
+        die("SMTP error: %s" % str(exc)[:200])
+    except (socket.timeout, TimeoutError):
+        die("timed out talking to %s" % host)
+    except (socket.gaierror, ConnectionError, ssl.SSLError, OSError) as exc:
+        die("connection to %s failed: %s" % (host, str(exc)[:150]))
+    finally:
+        if server is not None:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+
+def append_to_sent(account, message):
+    """Best effort: the mail is already delivered, so a failure here is a
+    warning, never an error. Gmail files its own copy, hence appendSent."""
+    if not account.get("appendSent", True):
+        return ""
+    folder = str(account.get("sentFolder", "Sent")).strip()
+    if not folder:
+        return ""
+    conn = None
+    try:
+        conn = imaplib.IMAP4_SSL(str(account["host"]), int(account.get("port", 993) or 993),
+                                 ssl_context=ssl.create_default_context())
+        conn.login(str(account["user"]), require_password(str(account.get("id", ""))))
+        status, _ = conn.append('"%s"' % folder.replace('"', ''), "(\\Seen)",
+                                imaplib.Time2Internaldate(time.time()),
+                                message.as_bytes())
+        if status != "OK":
+            return "sent, but the copy could not be filed in '%s'" % folder
+        return ""
+    except Exception as exc:
+        return "sent, but filing a copy in '%s' failed: %s" % (folder, str(exc)[:120])
+    finally:
+        close(conn)
+
+
+def flag_original(account, request):
+    uid = str(request.get("uid", "")).strip()
+    if not uid:
+        return ""
+    flags = []
+    if request.get("markAnswered", True):
+        flags.append("\\Answered")
+    if request.get("markSeen"):
+        flags.append("\\Seen")
+    if not flags:
+        return ""
+    conn = None
+    try:
+        conn, _ = connect(account, readonly=False)
+        status, _ = conn.uid("STORE", uid, "+FLAGS", "(%s)" % " ".join(flags))
+        return "" if status == "OK" else "sent, but the original stayed unflagged"
+    except Exception as exc:
+        return "sent, but flagging the original failed: %s" % str(exc)[:120]
+    finally:
+        close(conn)
+
+
+def main():
+    try:
+        request = json.load(sys.stdin)
+        if not isinstance(request, dict):
+            die("request must be a JSON object")
+    except ValueError as exc:
+        emit({"sent": False, "error": "unreadable request: %s" % str(exc)[:120]})
+        return
+
+    try:
+        account = require_account(str(request.get("account", "")))
+        message, recipients = build(account, request)
+        transmit(account, message, recipients)
+    except AccountError as exc:
+        emit({"sent": False, "error": str(exc)})
+        return
+    except Exception as exc:
+        emit({"sent": False, "error": "%s: %s" % (type(exc).__name__, str(exc)[:150])})
+        return
+
+    # Past this point the mail is out. Nothing below may report failure.
+    warnings = [w for w in (append_to_sent(account, message),
+                            flag_original(account, request)) if w]
+    emit({"sent": True, "error": "", "warning": "; ".join(warnings),
+          "messageId": message["Message-ID"]})
+
+
+if __name__ == "__main__":
+    main()

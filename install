@@ -1,0 +1,42 @@
+#!/bin/bash
+# Optional: put the two account commands on your PATH, so `mail-inbox-setup` and
+# `mail-inbox-account` work from any shell. The widget itself does NOT need
+# this — Service.qml calls the scripts by absolute path.
+#
+# Idempotent. An existing real file at the destination is backed up once to
+# <name>.bak before it is replaced; an existing symlink to the same target is
+# left alone.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEST_DIR="$HOME/.local/bin"
+
+mkdir -p "$DEST_DIR" || { echo "Cannot create $DEST_DIR" >&2; exit 1; }
+
+for name in mail-inbox-setup mail-inbox-account; do
+  source="$SCRIPT_DIR/bin/$name"
+  dest="$DEST_DIR/$name"
+
+  if [[ ! -x $source ]]; then
+    echo "Missing or not executable: $source" >&2
+    exit 1
+  fi
+
+  if [[ -L $dest ]]; then
+    if [[ "$(readlink -f "$dest")" == "$(readlink -f "$source")" ]]; then
+      echo "Already linked: $dest"
+      continue
+    fi
+    rm -f "$dest"
+  elif [[ -e $dest ]]; then
+    mv -n "$dest" "$dest.bak" && echo "Existing file moved to $dest.bak"
+  fi
+
+  ln -s "$source" "$dest" && echo "Linked: $dest"
+done
+
+case ":$PATH:" in
+  *":$DEST_DIR:"*) ;;
+  *) echo "Note: $DEST_DIR is not on your PATH." ;;
+esac

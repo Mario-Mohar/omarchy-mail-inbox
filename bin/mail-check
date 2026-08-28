@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Poll IMAP mailboxes and print their unread state as JSON.
+
+Messages are addressed by UID, not sequence number: the panel hands a UID
+back to mail-read / mail-mark / mail-send later, and a sequence number would
+by then point at a different message.
+"""
+import argparse
+import concurrent.futures
+import email
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import (AccountError, close, connect, decode_field, die, emit,
+                        iso_date, load_accounts, sender_name)
+
+MAX_FETCH = 50
+MAX_PARALLEL = 8
+
+
+def failure(account, message):
+    return {"id": str(account.get("id", "")),
+            "label": str(account.get("label") or account.get("user") or account.get("id", "")),
+            "unread": 0, "messages": [], "uidvalidity": "", "error": message}
+
+
+def fetch(account, limit):
+    conn = None
+    try:
+        conn, validity = connect(account, readonly=True)
+
+        status, data = conn.uid("SEARCH", None, "UNSEEN")
+        if status != "OK":
+            die("UNSEEN search failed")
+        uids = data[0].split() if data and data[0] else []
+        unread = len(uids)
+
+        messages = []
+        wanted = uids[-min(limit, MAX_FETCH):]
+        for uid in reversed(wanted):
+            status, payload = conn.uid(
+                "FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            if status != "OK" or not payload or not payload[0]:
+                continue
+            chunk = payload[0][1]
+            if not isinstance(chunk, (bytes, bytearray)):
+                continue
+            header = email.message_from_bytes(bytes(chunk))
+            messages.append({
+                "uid": uid.decode("ascii", "replace"),
+                "from": sender_name(header.get("From", "")),
+                "subject": decode_field(header.get("Subject", "")) or "(no subject)",
+                "date": iso_date(header.get("Date", "")),
+            })
+        return {"id": str(account.get("id", "")), "unread": unread,
+                "messages": messages, "uidvalidity": validity, "error": ""}
+    finally:
+        close(conn)
+
+
+def poll(account, limit):
+    label = str(account.get("label") or account.get("user") or account.get("id", ""))
+    try:
+        result = fetch(account, limit)
+    except AccountError as exc:
+        return failure(account, str(exc))
+    except Exception as exc:  # never let one mailbox take the whole run down
+        return failure(account, "%s: %s" % (type(exc).__name__, str(exc)[:150]))
+    result["label"] = label
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Report unread IMAP mail as JSON.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--account", help="poll one account id from accounts.json")
+    group.add_argument("--all", action="store_true", help="poll every configured account")
+    parser.add_argument("--limit", type=int, default=12, help="messages to list per account")
+    args = parser.parse_args()
+    limit = max(1, min(args.limit, MAX_FETCH))
+
+    accounts = [a for a in load_accounts() if isinstance(a, dict) and a.get("id")]
+
+    if args.account:
+        match = [a for a in accounts if str(a.get("id")) == args.account]
+        if not match:
+            emit({"id": args.account, "label": args.account, "unread": 0,
+                  "messages": [], "uidvalidity": "",
+                  "error": ("no accounts configured — run mail-inbox-account add"
+                            if not accounts else
+                            "unknown account id '%s'" % args.account)})
+            return
+        emit(poll(match[0], limit))
+        return
+
+    if not accounts:
+        emit({"totalUnread": 0, "accounts": [],
+              "error": "no accounts configured — run mail-inbox-account add"})
+        return
+
+    # Mailboxes are polled in parallel: with a dozen accounts, doing this one
+    # after another would keep the widget stale for most of a minute.
+    workers = min(MAX_PARALLEL, len(accounts))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(lambda a: poll(a, limit), accounts))
+
+    # Preserve accounts.json order so the panel list does not reshuffle.
+    order = {str(a.get("id")): i for i, a in enumerate(accounts)}
+    results.sort(key=lambda r: order.get(r["id"], 999))
+
+    emit({"totalUnread": sum(r["unread"] for r in results),
+          "accounts": results, "error": ""})
+
+
+if __name__ == "__main__":
+    main()

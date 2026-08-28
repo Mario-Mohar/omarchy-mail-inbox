@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Manage mailboxes for the Omarchy Mail Inbox widget.
+
+Server details go to ~/.config/omarchy/mail-inbox/accounts.json.
+Passwords go to the login keyring — never to that file.
+"""
+import argparse
+import getpass
+import json
+import os
+import subprocess
+import sys
+
+CONFIG_DIR = os.path.expanduser("~/.config/omarchy/mail-inbox")
+ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
+KEYRING_SERVICE = "omarchy-mail-inbox"
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+PRESETS = {
+    "gmail":   ("imap.gmail.com", 993),
+    "proton":  ("127.0.0.1", 1143),
+    "icloud":  ("imap.mail.me.com", 993),
+    "outlook": ("outlook.office365.com", 993),
+    "gmx":     ("imap.gmx.net", 993),
+    "web.de":  ("imap.web.de", 993),
+    "mailbox": ("imap.mailbox.org", 993),
+}
+
+
+def load():
+    if not os.path.exists(ACCOUNTS_FILE):
+        return []
+    with open(ACCOUNTS_FILE, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    accounts = data.get("accounts") if isinstance(data, dict) else data
+    return accounts if isinstance(accounts, list) else []
+
+
+def save(accounts):
+    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    tmp = ACCOUNTS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"accounts": accounts}, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, ACCOUNTS_FILE)
+
+
+def store_password(account_id, password):
+    proc = subprocess.run(
+        ["secret-tool", "store", "--label", "Omarchy Mail Inbox: %s" % account_id,
+         "service", KEYRING_SERVICE, "account", account_id],
+        input=password.encode(), capture_output=True)
+    if proc.returncode != 0:
+        sys.exit("keyring write failed: %s" % proc.stderr.decode().strip())
+
+
+def cmd_add(args):
+    accounts = load()
+    print("Adding a mailbox. Ctrl+C aborts.\n")
+    account_id = args.id or input("Short id (no spaces, e.g. gmail): ").strip()
+    if not account_id or " " in account_id:
+        sys.exit("id must be non-empty and contain no spaces")
+    if any(a.get("id") == account_id for a in accounts):
+        sys.exit("id '%s' already exists — remove it first" % account_id)
+
+    print("Presets: %s" % ", ".join(sorted(PRESETS)))
+    preset = input("Preset (blank for manual): ").strip().lower()
+    if preset and preset in PRESETS:
+        host, port = PRESETS[preset]
+        print("  -> %s:%s" % (host, port))
+    else:
+        host = input("IMAP host: ").strip()
+        port = int(input("Port [993]: ").strip() or 993)
+
+    user = input("Username / email address: ").strip()
+    label = input("Bar label [%s]: " % account_id).strip() or account_id
+    folder = input("Folder [INBOX]: ").strip() or "INBOX"
+
+    if preset == "gmail":
+        print("\nGmail needs an App Password, not your normal password.")
+        print("Create one at https://myaccount.google.com/apppasswords")
+        print("(requires 2-step verification to be switched on).\n")
+
+    password = getpass.getpass("Password / app password (not echoed): ")
+    if not password:
+        sys.exit("empty password")
+
+    store_password(account_id, password)
+    accounts.append({"id": account_id, "label": label, "host": host,
+                     "port": port, "user": user, "folder": folder})
+    save(accounts)
+    print("\nSaved. Server details in %s, password in the keyring." % ACCOUNTS_FILE)
+    print("Testing…\n")
+    cmd_test(argparse.Namespace(id=account_id))
+
+
+def cmd_list(args):
+    accounts = load()
+    if not accounts:
+        print("No accounts yet. Run: mail-inbox-account add")
+        return
+    print("%-12s %-26s %-28s %s" % ("ID", "LABEL", "USER", "HOST"))
+    for a in accounts:
+        print("%-12s %-26s %-28s %s:%s" % (
+            a.get("id", ""), a.get("label", ""), a.get("user", ""),
+            a.get("host", ""), a.get("port", "")))
+
+
+def cmd_remove(args):
+    accounts = load()
+    remaining = [a for a in accounts if a.get("id") != args.id]
+    if len(remaining) == len(accounts):
+        sys.exit("no such account: %s" % args.id)
+    save(remaining)
+    subprocess.run(["secret-tool", "clear", "service", KEYRING_SERVICE,
+                    "account", args.id], capture_output=True)
+    print("Removed '%s' and cleared its keyring entry." % args.id)
+
+
+def cmd_test(args):
+    proc = subprocess.run([os.path.join(HERE, "mail-check"),
+                           "--account", args.id, "--limit", "5"],
+                          capture_output=True)
+    try:
+        result = json.loads(proc.stdout.decode() or "{}")
+    except ValueError:
+        sys.exit("backend returned junk: %s" % proc.stdout.decode()[:200])
+    if result.get("error"):
+        sys.exit("FAILED: %s" % result["error"])
+    print("OK — %d unread in %s" % (result.get("unread", 0), args.id))
+    for m in result.get("messages", [])[:5]:
+        print("   %-24s %s" % (m["from"][:24], m["subject"][:60]))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_add = sub.add_parser("add", help="add a mailbox interactively")
+    p_add.add_argument("id", nargs="?", help="short id")
+    p_add.set_defaults(func=cmd_add)
+    sub.add_parser("list", help="list configured mailboxes").set_defaults(func=cmd_list)
+    p_rm = sub.add_parser("remove", help="remove a mailbox")
+    p_rm.add_argument("id")
+    p_rm.set_defaults(func=cmd_remove)
+    p_test = sub.add_parser("test", help="poll a mailbox once")
+    p_test.add_argument("id")
+    p_test.set_defaults(func=cmd_test)
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

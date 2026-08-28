@@ -1,0 +1,19 @@
+#!/bin/bash
+# Removes what install created. Leaves your mailboxes, your passwords and the
+# plugin folder alone — see the README for how to remove those as well.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEST_DIR="$HOME/.local/bin"
+
+for name in mail-inbox-setup mail-inbox-account; do
+  dest="$DEST_DIR/$name"
+  # Only remove a symlink that actually points into this plugin. Anything else
+  # belongs to someone else and stays.
+  if [[ -L $dest && "$(readlink -f "$dest")" == "$(readlink -f "$SCRIPT_DIR/bin/$name")" ]]; then
+    rm -f "$dest" && echo "Removed: $dest"
+  elif [[ -e $dest ]]; then
+    echo "Left alone (not ours): $dest"
+  fi
+done

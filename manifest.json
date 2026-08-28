@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "themo.mail-inbox",
+  "name": "Mail Inbox",
+  "version": "3.0.0",
+  "author": "themo",
+  "license": "MIT",
+  "description": "Unread mail across all your mailboxes in the Omarchy bar. Plain IMAP, so Gmail (app password) and any other account work through one code path. Click a message to read it in full and reply without leaving the bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Mail Inbox",
+    "description": "One bar icon for all mailboxes: total unread count, with a panel that switches between accounts, opens a message in full and sends replies over SMTP. Scales to many addresses without adding bar clutter.",
+    "category": "Info",
+    "aliases": [
+      "compose",
+      "email",
+      "gmail",
+      "imap",
+      "inbox",
+      "mail",
+      "reply",
+      "smtp",
+      "unread"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 300,
+      "maxMessages": 12,
+      "hideWhenEmpty": false
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 60,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 300,
+        "description": "How often the mailbox is polled over IMAP."
+      },
+      {
+        "key": "maxMessages",
+        "type": "integer",
+        "label": "Messages in panel",
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "defaultValue": 12,
+        "description": "How many unread messages the panel lists."
+      },
+      {
+        "key": "hideWhenEmpty",
+        "type": "boolean",
+        "label": "Hide when no unread mail",
+        "defaultValue": false,
+        "description": "Remove the pill from the bar entirely while the mailbox is read."
+      }
+    ]
+  }
+}

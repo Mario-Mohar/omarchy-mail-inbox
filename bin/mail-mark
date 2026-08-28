@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Set or clear a flag on one message, addressed by UID.
+
+The panel never marks anything on its own — this runs only when the user
+presses the button, so the bar counter cannot drop just because a mail was
+glanced at.
+"""
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import AccountError, close, connect, die, emit, require_account
+
+FLAGS = {"seen": "\\Seen", "answered": "\\Answered", "flagged": "\\Flagged"}
+
+
+def apply_flag(account, uid, flag, remove, expect_validity):
+    conn = None
+    try:
+        conn, validity = connect(account, readonly=False)
+        if expect_validity and validity and expect_validity != validity:
+            die("mailbox was rebuilt (UIDVALIDITY changed) — refresh and reopen")
+        status, _ = conn.uid("STORE", str(uid),
+                             "-FLAGS" if remove else "+FLAGS", "(%s)" % FLAGS[flag])
+        if status != "OK":
+            die("server refused the flag change on message %s" % uid)
+        return {"uid": str(uid), "account": str(account.get("id", "")),
+                "flag": flag, "removed": bool(remove), "error": ""}
+    finally:
+        close(conn)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Flag a message over IMAP.")
+    parser.add_argument("--account", required=True)
+    parser.add_argument("--uid", required=True)
+    parser.add_argument("--flag", choices=sorted(FLAGS), default="seen")
+    parser.add_argument("--remove", action="store_true", help="clear the flag instead")
+    parser.add_argument("--uidvalidity", default="")
+    args = parser.parse_args()
+
+    try:
+        account = require_account(args.account)
+        emit(apply_flag(account, args.uid, args.flag, args.remove,
+                        args.uidvalidity.strip()))
+    except AccountError as exc:
+        emit({"uid": args.uid, "account": args.account, "error": str(exc)})
+    except Exception as exc:
+        emit({"uid": args.uid, "account": args.account,
+              "error": "%s: %s" % (type(exc).__name__, str(exc)[:150])})
+
+
+if __name__ == "__main__":
+    main()

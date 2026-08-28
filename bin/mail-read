@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Fetch one message by UID and print its readable body as JSON.
+
+Only the first MAX_BODY_BYTES of the message text are pulled. A mail with a
+20 MB attachment would otherwise stall the panel for the sake of a body that
+is almost always in the first few kilobytes; MIME puts the text parts before
+the attachments, so the truncation costs nothing in practice. The 'truncated'
+flag says when that happened, so the panel never implies it showed everything.
+"""
+import argparse
+import email
+import email.policy
+import html
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import (AccountError, close, connect, decode_field, die, emit,
+                        iso_date, require_account)
+
+MAX_BODY_BYTES = 262144
+MAX_BODY_CHARS = 120000
+
+TAG_BREAK = re.compile(r"(?i)<\s*(br|/p|/div|/tr|/li|/h[1-6])\s*[^>]*>")
+TAG_DROP = re.compile(r"(?is)<\s*(script|style|head)[^>]*>.*?<\s*/\s*\1\s*>")
+TAG_ANY = re.compile(r"(?s)<[^>]+>")
+BLANK_RUN = re.compile(r"\n{3,}")
+
+
+def html_to_text(raw):
+    text = TAG_DROP.sub(" ", raw)
+    text = TAG_BREAK.sub("\n", text)
+    text = TAG_ANY.sub("", text)
+    text = html.unescape(text)
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    return BLANK_RUN.sub("\n\n", text).strip()
+
+
+def part_text(part):
+    payload = part.get_payload(decode=True)
+    if payload is None:
+        return ""
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return payload.decode(charset, "replace")
+    except LookupError:
+        return payload.decode("utf-8", "replace")
+
+
+def extract_body(message):
+    """Prefer text/plain; fall back to the first text/html, flattened."""
+    plain, rich, attachments = [], [], []
+    for part in message.walk():
+        if part.is_multipart():
+            continue
+        disposition = str(part.get("Content-Disposition", "")).lower()
+        filename = part.get_filename()
+        if filename or "attachment" in disposition:
+            attachments.append(decode_field(filename or "(unnamed)", limit=120))
+            continue
+        ctype = part.get_content_type()
+        if ctype == "text/plain":
+            plain.append(part_text(part))
+        elif ctype == "text/html":
+            rich.append(part_text(part))
+
+    body = "\n\n".join(t for t in plain if t.strip())
+    kind = "plain"
+    if not body.strip():
+        body = html_to_text("\n".join(rich))
+        kind = "html"
+    if not body.strip():
+        body, kind = "", "empty"
+    return body[:MAX_BODY_CHARS], kind, attachments
+
+
+def addresses(raw):
+    """Header value -> list of bare addresses, lowercased for comparison."""
+    out = []
+    for _, addr in email.utils.getaddresses([decode_field(raw, limit=0) or ""]):
+        if addr and "@" in addr:
+            out.append(addr)
+    return out
+
+
+def fetch(account, uid, expect_validity):
+    conn = None
+    try:
+        conn, validity = connect(account, readonly=True)
+        if expect_validity and validity and expect_validity != validity:
+            die("mailbox was rebuilt (UIDVALIDITY changed) — refresh and reopen")
+
+        status, payload = conn.uid(
+            "FETCH", str(uid),
+            "(RFC822.SIZE BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.%d>)" % MAX_BODY_BYTES)
+        if status != "OK" or not payload:
+            die("message %s could not be fetched" % uid)
+
+        header_bytes, text_bytes, size = b"", b"", 0
+        for item in payload:
+            if not isinstance(item, tuple) or len(item) < 2:
+                continue
+            spec = item[0].decode("ascii", "replace") if isinstance(item[0], (bytes, bytearray)) else ""
+            chunk = item[1] if isinstance(item[1], (bytes, bytearray)) else b""
+            if "HEADER" in spec:
+                header_bytes = bytes(chunk)
+            elif "TEXT" in spec:
+                text_bytes = bytes(chunk)
+            match = re.search(r"RFC822\.SIZE (\d+)", spec)
+            if match:
+                size = int(match.group(1))
+
+        if not header_bytes:
+            die("message %s is gone from the mailbox" % uid)
+
+        message = email.message_from_bytes(header_bytes + b"\r\n" + text_bytes,
+                                           policy=email.policy.compat32)
+        body, kind, attachments = extract_body(message)
+
+        own = str(account.get("from") or account.get("user") or "").lower()
+        reply_to = addresses(message.get("Reply-To", "")) or addresses(message.get("From", ""))
+        cc_all = [a for a in addresses(message.get("To", "")) + addresses(message.get("Cc", ""))
+                  if a.lower() != own and a.lower() not in {r.lower() for r in reply_to}]
+
+        references = " ".join((decode_field(message.get("References", ""), limit=0) + " "
+                               + decode_field(message.get("Message-ID", ""), limit=0)).split())
+
+        return {
+            "uid": str(uid),
+            "account": str(account.get("id", "")),
+            "from": decode_field(message.get("From", "")),
+            "to": decode_field(message.get("To", "")),
+            "cc": decode_field(message.get("Cc", "")),
+            "subject": decode_field(message.get("Subject", "")) or "(no subject)",
+            "date": iso_date(message.get("Date", "")),
+            "body": body,
+            "bodyKind": kind,
+            "attachments": attachments,
+            "truncated": bool(size and size > len(header_bytes) + MAX_BODY_BYTES),
+            "messageId": decode_field(message.get("Message-ID", ""), limit=0),
+            "references": references,
+            "replyTo": reply_to,
+            "replyAllCc": cc_all,
+            "error": "",
+        }
+    finally:
+        close(conn)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Print one message as JSON.")
+    parser.add_argument("--account", required=True)
+    parser.add_argument("--uid", required=True)
+    parser.add_argument("--uidvalidity", default="")
+    args = parser.parse_args()
+
+    try:
+        account = require_account(args.account)
+        emit(fetch(account, args.uid, args.uidvalidity.strip()))
+    except AccountError as exc:
+        emit({"uid": args.uid, "account": args.account, "body": "",
+              "attachments": [], "replyTo": [], "replyAllCc": [], "error": str(exc)})
+    except Exception as exc:
+        emit({"uid": args.uid, "account": args.account, "body": "",
+              "attachments": [], "replyTo": [], "replyAllCc": [],
+              "error": "%s: %s" % (type(exc).__name__, str(exc)[:150])})
+
+
+if __name__ == "__main__":
+    main()
