@@ -225,6 +225,9 @@ Panel {
             spacing: Style.space(8)
 
             Text {
+              // Mail decides what is in these strings. Without this Qt guesses
+              // whether the text is rich text and would render markup from a subject.
+              textFormat: Text.PlainText
               text: "Mail"
               color: root.foreground
               font.family: root.fontFamily
@@ -233,6 +236,9 @@ Panel {
             }
 
             Text {
+              // Mail decides what is in these strings. Without this Qt guesses
+              // whether the text is rich text and would render markup from a subject.
+              textFormat: Text.PlainText
               text: {
                 if (!root.configured) return "no mailbox yet"
                 return root.totalUnread === 0 ? "all clear"
@@ -271,6 +277,9 @@ Panel {
             spacing: Style.space(10)
 
             Text {
+              // Mail decides what is in these strings. Without this Qt guesses
+              // whether the text is rich text and would render markup from a subject.
+              textFormat: Text.PlainText
               text: "No mailbox configured yet."
               color: root.dim
               font.family: root.fontFamily
@@ -344,6 +353,9 @@ Panel {
                     implicitHeight: nameText.implicitHeight
 
                     Text {
+                      // Mail decides what is in these strings. Without this Qt guesses
+                      // whether the text is rich text and would render markup from a subject.
+                      textFormat: Text.PlainText
                       id: nameText
                       anchors.left: parent.left
                       anchors.right: countText.left
@@ -357,6 +369,9 @@ Panel {
                     }
 
                     Text {
+                      // Mail decides what is in these strings. Without this Qt guesses
+                      // whether the text is rich text and would render markup from a subject.
+                      textFormat: Text.PlainText
                       id: countText
                       anchors.right: parent.right
                       text: modelData.error && modelData.error !== ""
@@ -400,6 +415,9 @@ Panel {
               width: mailScroll.width
 
               Text {
+                // Mail decides what is in these strings. Without this Qt guesses
+                // whether the text is rich text and would render markup from a subject.
+                textFormat: Text.PlainText
                 width: parent.width - Style.space(28)
                 x: Style.space(14)
                 topPadding: Style.space(10)
@@ -412,6 +430,9 @@ Panel {
               }
 
               Text {
+                // Mail decides what is in these strings. Without this Qt guesses
+                // whether the text is rich text and would render markup from a subject.
+                textFormat: Text.PlainText
                 width: parent.width - Style.space(28)
                 x: Style.space(14)
                 topPadding: Style.space(10)
@@ -456,6 +477,9 @@ Panel {
                       height: fromText.implicitHeight
 
                       Text {
+                        // Mail decides what is in these strings. Without this Qt guesses
+                        // whether the text is rich text and would render markup from a subject.
+                        textFormat: Text.PlainText
                         id: fromText
                         anchors.left: parent.left
                         anchors.right: timeText.left
@@ -469,6 +493,9 @@ Panel {
                       }
 
                       Text {
+                        // Mail decides what is in these strings. Without this Qt guesses
+                        // whether the text is rich text and would render markup from a subject.
+                        textFormat: Text.PlainText
                         id: timeText
                         anchors.right: parent.right
                         text: root.whenText(modelData.date)
@@ -479,6 +506,9 @@ Panel {
                     }
 
                     Text {
+                      // Mail decides what is in these strings. Without this Qt guesses
+                      // whether the text is rich text and would render markup from a subject.
+                      textFormat: Text.PlainText
                       width: parent.width
                       text: modelData.subject
                       elide: Text.ElideRight
@@ -518,6 +548,9 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   text: "←  Back"
                   color: backArea.containsMouse ? root.accent : root.dim
                   font.family: root.fontFamily
@@ -535,6 +568,9 @@ Panel {
               }
 
               Text {
+                // Mail decides what is in these strings. Without this Qt guesses
+                // whether the text is rich text and would render markup from a subject.
+                textFormat: Text.PlainText
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(14)
                 anchors.verticalCenter: parent.verticalCenter
@@ -547,6 +583,9 @@ Panel {
             }
 
             Text {
+              // Mail decides what is in these strings. Without this Qt guesses
+              // whether the text is rich text and would render markup from a subject.
+              textFormat: Text.PlainText
               anchors.top: readerHeader.bottom
               anchors.left: parent.left
               anchors.right: parent.right
@@ -580,6 +619,9 @@ Panel {
                 spacing: Style.space(4)
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   width: parent.width - Style.space(28)
                   x: Style.space(14)
                   text: root.detail ? root.detail.subject : ""
@@ -591,6 +633,9 @@ Panel {
                 }
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   width: parent.width - Style.space(28)
                   x: Style.space(14)
                   text: root.detail
@@ -603,6 +648,9 @@ Panel {
                 }
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   width: parent.width - Style.space(28)
                   x: Style.space(14)
                   visible: root.detail && root.detail.attachments
@@ -634,6 +682,9 @@ Panel {
                 }
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   width: parent.width - Style.space(28)
                   x: Style.space(14)
                   visible: root.detail && root.detail.truncated === true
@@ -666,6 +717,9 @@ Panel {
                 height: recipientText.implicitHeight
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   id: recipientText
                   anchors.left: parent.left
                   anchors.right: replyAllToggle.left
@@ -681,6 +735,9 @@ Panel {
                 }
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   id: replyAllToggle
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
@@ -752,6 +809,9 @@ Panel {
                 }
 
                 Text {
+                  // Mail decides what is in these strings. Without this Qt guesses
+                  // whether the text is rich text and would render markup from a subject.
+                  textFormat: Text.PlainText
                   anchors.left: parent.left
                   anchors.top: parent.top
                   anchors.margins: Style.space(8)
@@ -764,6 +824,9 @@ Panel {
               }
 
               Text {
+                // Mail decides what is in these strings. Without this Qt guesses
+                // whether the text is rich text and would render markup from a subject.
+                textFormat: Text.PlainText
                 width: parent.width
                 visible: root.service && (root.service.sendError !== ""
                   || root.service.sendWarning !== "")

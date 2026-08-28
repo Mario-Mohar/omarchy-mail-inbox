@@ -159,12 +159,37 @@ Item {
     }
   }
 
+  // A StdioCollector buffers everything the helper writes before anything gets
+  // to look at it, so a helper that goes wrong could grow that buffer without
+  // limit. The helpers cap what they emit; this is the second half of the same
+  // rule, on the side that does the buffering. Watchdogs cover the other
+  // failure: a helper that never exits at all.
+  readonly property int maxStdoutChars: 512 * 1024
+  readonly property int watchdogMs: 90000
+
+  function takeOutput(collector, what) {
+    var text = String(collector.text || "")
+    if (text.length > root.maxStdoutChars) {
+      console.warn("mail-inbox: " + what + " produced "
+                   + text.length + " characters, discarding")
+      return ""
+    }
+    return text
+  }
+
+  Timer {
+    id: pollWatchdog
+    interval: root.watchdogMs
+    onTriggered: { pollProcess.signal(15); root.error = "mail-check timed out" }
+  }
+
   Process {
     id: pollProcess
     command: []
     stdout: StdioCollector { id: pollStdout; waitForEnd: true }
+    onRunningChanged: running ? pollWatchdog.restart() : pollWatchdog.stop()
     onExited: function (exitCode) {
-      if (exitCode === 0) root.apply(String(pollStdout.text || ""))
+      if (exitCode === 0) root.apply(root.takeOutput(pollStdout, "mail-check"))
       else {
         root.error = "mail-check failed (exit " + exitCode + ")"
         root.everLoaded = true
@@ -172,10 +197,17 @@ Item {
     }
   }
 
+  Timer {
+    id: readWatchdog
+    interval: root.watchdogMs
+    onTriggered: { readProcess.signal(15); root.detailError = "mail-read timed out" }
+  }
+
   Process {
     id: readProcess
     command: []
     stdout: StdioCollector { id: readStdout; waitForEnd: true }
+    onRunningChanged: running ? readWatchdog.restart() : readWatchdog.stop()
     onExited: function (exitCode) {
       if (exitCode !== 0) {
         root.detailError = "mail-read failed (exit " + exitCode + ")"
@@ -183,7 +215,7 @@ Item {
       }
       var payload
       try {
-        payload = JSON.parse(String(readStdout.text || ""))
+        payload = JSON.parse(root.takeOutput(readStdout, "mail-read"))
       } catch (e) {
         root.detailError = "could not read that message"
         return
@@ -208,12 +240,23 @@ Item {
     }
   }
 
+  Timer {
+    id: sendWatchdog
+    interval: root.watchdogMs
+    onTriggered: {
+      sendProcess.signal(15)
+      root.sending = false
+      root.sendError = "mail-send timed out"
+    }
+  }
+
   Process {
     id: sendProcess
     property string payload: ""
     command: []
     stdinEnabled: true
     stdout: StdioCollector { id: sendStdout; waitForEnd: true }
+    onRunningChanged: running ? sendWatchdog.restart() : sendWatchdog.stop()
     onStarted: {
       write(payload)
       payload = ""
@@ -227,7 +270,7 @@ Item {
       }
       var result
       try {
-        result = JSON.parse(String(sendStdout.text || ""))
+        result = JSON.parse(root.takeOutput(sendStdout, "mail-send"))
       } catch (e) {
         root.sendError = "mail-send returned unparseable output"
         return

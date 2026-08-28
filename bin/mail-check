@@ -12,8 +12,12 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mailcommon import (AccountError, close, connect, decode_field, die, emit,
-                        iso_date, load_accounts, sender_name)
+import re
+from collections import deque
+
+from mailcommon import (MAX_UID_TAIL, AccountError, close, connect,
+                        decode_field, die, emit, iso_date, load_accounts,
+                        sender_name)
 
 MAX_FETCH = 50
 MAX_PARALLEL = 8
@@ -33,11 +37,20 @@ def fetch(account, limit):
         status, data = conn.uid("SEARCH", None, "UNSEEN")
         if status != "OK":
             die("UNSEEN search failed")
-        uids = data[0].split() if data and data[0] else []
-        unread = len(uids)
+        # A mailbox with a few hundred thousand unread messages returns a
+        # SEARCH line to match. Splitting it builds one list element per UID,
+        # even though only the newest handful is ever fetched. Count in a
+        # single pass and keep a bounded tail instead.
+        raw = data[0] if data and data[0] else b""
+        want = min(limit, MAX_FETCH, MAX_UID_TAIL)
+        tail = deque(maxlen=want)
+        unread = 0
+        for match in re.finditer(rb"\d+", raw):
+            unread += 1
+            tail.append(match.group(0))
 
         messages = []
-        wanted = uids[-min(limit, MAX_FETCH):]
+        wanted = list(tail)
         for uid in reversed(wanted):
             status, payload = conn.uid(
                 "FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")

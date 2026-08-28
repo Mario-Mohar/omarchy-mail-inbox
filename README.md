@@ -160,6 +160,20 @@ Worth knowing before you install any plugin that reads your mail:
 - **Files:** `~/.config/omarchy/mail-inbox/accounts.json` (mode 600) and its
   backups. Nothing outside that folder, apart from the optional PATH links.
 
+## Limits
+
+Everything the widget reads comes either from a file on disk or off the network,
+so both sides are bounded rather than trusted:
+
+| | |
+|---|---|
+| `accounts.json` | opened with `O_NOFOLLOW`; regular file, your ownership and mode 600 are checked on the same descriptor that is read from, not on the path. At most 256 KB, 50 accounts, 40 fields each. |
+| Config writes | created with `O_EXCL` at mode 600 and `fsync`ed before the atomic replace, so there is no window in which the file exists with a wider mode. The directory must be yours and not group- or world-writable. |
+| IMAP search | the UID list is counted in one pass and only a bounded tail is kept, so a mailbox with a very large unread count costs the same memory as a small one. |
+| Helper output | capped at both ends: the scripts bound every string and list they emit, and the widget discards a response larger than 512 KB instead of parsing it. |
+| Stuck helpers | each poll, read and send has a 90 second watchdog that terminates it. |
+| Displayed text | every label renders as plain text, and strings that reach the shared bar tooltip are length-limited with angle brackets removed. Mail decides what is in a subject line. |
+
 ## Notes
 
 Messages are addressed by UID together with the mailbox's `UIDVALIDITY`, never

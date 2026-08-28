@@ -25,16 +25,33 @@ BarWidget {
     return mail.totalUnread > 0 ? glyph + " " + mail.totalUnread : glyph
   }
 
+  // Account labels come from the config, error strings come from the server, and
+  // both end up in the shared tooltip component, whose text format is not ours
+  // to set. So bound the length here and drop the one character that could turn
+  // the string into markup if that component ever renders rich text.
+  readonly property int maxTooltipLines: 30
+  readonly property int maxTooltipField: 120
+
+  function tooltipSafe(value) {
+    return String(value === undefined || value === null ? "" : value)
+      .replace(/[<>]/g, "")
+      .substring(0, root.maxTooltipField)
+  }
+
   readonly property string tooltip: {
     if (!mail.configured)
       return "Mail Inbox — no mailbox configured yet.\nClick and use “Add a mailbox”."
     var lines = []
-    for (var i = 0; i < mail.accounts.length; i++) {
+    var shown = Math.min(mail.accounts.length, root.maxTooltipLines)
+    for (var i = 0; i < shown; i++) {
       var a = mail.accounts[i]
+      var label = root.tooltipSafe(a.label)
       lines.push(a.error && a.error !== ""
-        ? a.label + " — " + a.error
-        : a.label + " — " + (a.unread > 0 ? a.unread : "clear"))
+        ? label + " — " + root.tooltipSafe(a.error)
+        : label + " — " + (a.unread > 0 ? root.tooltipSafe(a.unread) : "clear"))
     }
+    if (mail.accounts.length > shown)
+      lines.push("… and " + (mail.accounts.length - shown) + " more")
     return lines.join("\n")
   }
 

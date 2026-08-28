@@ -20,7 +20,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mailcommon import (AccountError, close, connect, die, emit, require_account,
+from mailcommon import (MAX_RECIPIENTS, AccountError, close, connect, die, emit, require_account,
                         require_password)
 
 MAX_BODY_CHARS = 200000
@@ -35,8 +35,10 @@ def as_list(value):
 
 
 def build(account, request):
-    to = as_list(request.get("to"))
-    cc = as_list(request.get("cc"))
+    # A reply-all to a message with a thousand addresses in Cc would otherwise
+    # hand the whole list straight to the SMTP server.
+    to = as_list(request.get("to"))[:MAX_RECIPIENTS]
+    cc = as_list(request.get("cc"))[:MAX_RECIPIENTS]
     if not to:
         die("no recipient")
 

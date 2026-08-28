@@ -7,12 +7,16 @@ time. Message bodies and reply text travel over stdin for the same reason.
 import email
 import email.header
 import email.utils
+import errno
 import imaplib
 import json
 import os
+import re
 import socket
 import ssl
+import stat
 import subprocess
+from collections import deque
 
 CONFIG_DIR = os.path.expanduser("~/.config/omarchy/mail-inbox")
 ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
@@ -20,6 +24,18 @@ KEYRING_SERVICE = "omarchy-mail-inbox"
 
 CONNECT_TIMEOUT = 20
 MAX_FIELD = 300
+
+# Hard ceilings. The config file is trusted-ish (it is the user's own), but a
+# corrupted or hostile one must not be able to spend unbounded memory or open an
+# unbounded number of connections before anything notices.
+MAX_CONFIG_BYTES = 256 * 1024
+MAX_ACCOUNTS = 50
+MAX_FIELDS_PER_ACCOUNT = 40
+MAX_FIELD_VALUE = 2048
+# Everything below comes off the network and is attacker-influenced.
+MAX_UID_TAIL = 200
+MAX_RECIPIENTS = 50
+MAX_ATTACHMENT_NAMES = 25
 
 # imaplib refuses very long lines by default; some servers send big FLAGS runs.
 imaplib._MAXLINE = max(imaplib._MAXLINE, 200000)
@@ -34,16 +50,88 @@ def die(message):
     raise AccountError(message)
 
 
+def _read_config_bytes():
+    """Read accounts.json through one descriptor, with the checks on that same
+    descriptor rather than on the path.
+
+    Checking a path and then opening it is two different files as far as the
+    kernel is concerned. O_NOFOLLOW refuses a symlink outright, and every
+    property below is asked of the descriptor we actually read from, so nothing
+    can be swapped underneath us in between.
+    """
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(ACCOUNTS_FILE, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            die("accounts.json is a symlink, refusing to read it")
+        die("accounts.json unreadable: %s" % exc)
+
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            die("accounts.json is not a regular file")
+        if info.st_uid != os.geteuid():
+            die("accounts.json is owned by uid %d, not by you" % info.st_uid)
+        if info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            die("accounts.json is readable by others — run: chmod 600 %s"
+                % ACCOUNTS_FILE)
+        if info.st_size > MAX_CONFIG_BYTES:
+            die("accounts.json is larger than %d bytes" % MAX_CONFIG_BYTES)
+
+        chunks = []
+        remaining = MAX_CONFIG_BYTES + 1
+        while remaining > 0:
+            block = os.read(fd, min(65536, remaining))
+            if not block:
+                break
+            chunks.append(block)
+            remaining -= len(block)
+        raw = b"".join(chunks)
+        if len(raw) > MAX_CONFIG_BYTES:
+            die("accounts.json grew past %d bytes while reading"
+                % MAX_CONFIG_BYTES)
+        return raw
+    finally:
+        os.close(fd)
+
+
+def _clip_value(value):
+    """Config values end up in log lines and IMAP commands. Bound them."""
+    if isinstance(value, str):
+        return value[:MAX_FIELD_VALUE]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:MAX_FIELD_VALUE]
+
+
+def _sanitise_accounts(entries):
+    """Cap the list and each entry before anything opens a connection."""
+    accounts = []
+    for entry in entries[:MAX_ACCOUNTS]:
+        if not isinstance(entry, dict):
+            continue
+        clean = {}
+        for key in list(entry)[:MAX_FIELDS_PER_ACCOUNT]:
+            clean[str(key)[:MAX_FIELD_VALUE]] = _clip_value(entry[key])
+        accounts.append(clean)
+    return accounts
+
+
 def load_accounts():
-    if not os.path.exists(ACCOUNTS_FILE):
+    raw = _read_config_bytes()
+    if raw is None:
         return []
     try:
-        with open(ACCOUNTS_FILE, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError) as exc:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
         die("accounts.json unreadable: %s" % exc)
-    accounts = data.get("accounts") if isinstance(data, dict) else data
-    return accounts if isinstance(accounts, list) else []
+    entries = data.get("accounts") if isinstance(data, dict) else data
+    if not isinstance(entries, list):
+        return []
+    return _sanitise_accounts(entries)
 
 
 def find_account(account_id):
@@ -174,7 +262,32 @@ def iso_date(raw):
     return parsed.astimezone().isoformat()
 
 
+MAX_EMIT_BYTES = 1024 * 1024
+
+
+def _bound(value, depth=0):
+    """Cap every string and list on the way out.
+
+    The consumer is a QML StdioCollector that buffers whatever arrives before
+    anything gets to look at it. The cheapest place to bound that buffer is
+    here, at the producer, where the shape of the data is still known.
+    """
+    if depth > 8:
+        return None
+    if isinstance(value, str):
+        return value[:MAX_FIELD_VALUE]
+    if isinstance(value, dict):
+        return {str(k)[:MAX_FIELD_VALUE]: _bound(v, depth + 1)
+                for k, v in list(value.items())[:MAX_FIELDS_PER_ACCOUNT]}
+    if isinstance(value, list):
+        return [_bound(v, depth + 1) for v in value[:MAX_ACCOUNTS]]
+    return value
+
+
 def emit(payload):
     import sys
-    json.dump(payload, sys.stdout, ensure_ascii=False)
+    text = json.dumps(_bound(payload), ensure_ascii=False)
+    if len(text.encode("utf-8")) > MAX_EMIT_BYTES:
+        text = json.dumps({"error": "response too large, refusing to emit"})
+    sys.stdout.write(text)
     sys.stdout.write("\n")

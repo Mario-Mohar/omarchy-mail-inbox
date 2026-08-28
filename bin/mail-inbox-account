@@ -8,8 +8,12 @@ import argparse
 import getpass
 import json
 import os
+import stat
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import load_accounts  # noqa: E402  (hardened reader)
 
 CONFIG_DIR = os.path.expanduser("~/.config/omarchy/mail-inbox")
 ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
@@ -28,21 +32,55 @@ PRESETS = {
 
 
 def load():
-    if not os.path.exists(ACCOUNTS_FILE):
-        return []
-    with open(ACCOUNTS_FILE, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
-    accounts = data.get("accounts") if isinstance(data, dict) else data
-    return accounts if isinstance(accounts, list) else []
+    # Same hardened reader the widget uses, so both agree on what is acceptable.
+    return load_accounts()
+
+
+def _require_safe_dir(path):
+    """The directory we are about to write into must be ours and not writable
+    by anyone else, or a third party could swap the file we just replaced."""
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid():
+            sys.exit("%s is owned by uid %d, not by you" % (path, info.st_uid))
+        if info.st_mode & stat.S_IWOTH and not info.st_mode & stat.S_ISVTX:
+            sys.exit("%s is world-writable" % path)
+        if info.st_mode & stat.S_IWGRP:
+            sys.exit("%s is group-writable — run: chmod 700 %s" % (path, path))
+    finally:
+        os.close(fd)
 
 
 def save(accounts):
+    """Atomic, symlink-safe replace.
+
+    The temporary file is created with O_EXCL and mode 600 from the start:
+    creating it first and calling chmod afterwards leaves a window in which the
+    file exists with the default mode, and the passwords are not in here but
+    the server names and addresses are.
+    """
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    _require_safe_dir(CONFIG_DIR)
+
     tmp = ACCOUNTS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"accounts": accounts}, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")
-    os.chmod(tmp, 0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(tmp, flags, 0o600)
+    except FileExistsError:
+        os.unlink(tmp)
+        fd = os.open(tmp, flags, 0o600)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as fh:
+            json.dump({"accounts": accounts}, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fd)
+    finally:
+        os.close(fd)
+
     os.replace(tmp, ACCOUNTS_FILE)
 
 

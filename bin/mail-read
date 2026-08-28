@@ -16,7 +16,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mailcommon import (AccountError, close, connect, decode_field, die, emit,
+from mailcommon import (MAX_ATTACHMENT_NAMES, AccountError, close, connect, decode_field, die, emit,
                         iso_date, require_account)
 
 MAX_BODY_BYTES = 262144
@@ -57,7 +57,10 @@ def extract_body(message):
         disposition = str(part.get("Content-Disposition", "")).lower()
         filename = part.get_filename()
         if filename or "attachment" in disposition:
-            attachments.append(decode_field(filename or "(unnamed)", limit=120))
+            # A message can carry an arbitrary number of parts; only the names
+            # are shown, so there is no reason to collect more than a screenful.
+            if len(attachments) < MAX_ATTACHMENT_NAMES:
+                attachments.append(decode_field(filename or "(unnamed)", limit=120))
             continue
         ctype = part.get_content_type()
         if ctype == "text/plain":
