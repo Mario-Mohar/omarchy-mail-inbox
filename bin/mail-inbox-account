@@ -20,14 +20,18 @@ ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
 KEYRING_SERVICE = "omarchy-mail-inbox"
 HERE = os.path.dirname(os.path.realpath(__file__))
 
+# host, port, starttls. The third field is not decoration: Proton Bridge
+# listens on 1143 and speaks STARTTLS, so an account written without it gets an
+# implicit-TLS handshake against a port that will not answer one, and the
+# mailbox never connects. Everything else here is implicit TLS on 993.
 PRESETS = {
-    "gmail":   ("imap.gmail.com", 993),
-    "proton":  ("127.0.0.1", 1143),
-    "icloud":  ("imap.mail.me.com", 993),
-    "outlook": ("outlook.office365.com", 993),
-    "gmx":     ("imap.gmx.net", 993),
-    "web.de":  ("imap.web.de", 993),
-    "mailbox": ("imap.mailbox.org", 993),
+    "gmail":   ("imap.gmail.com", 993, False),
+    "proton":  ("127.0.0.1", 1143, True),
+    "icloud":  ("imap.mail.me.com", 993, False),
+    "outlook": ("outlook.office365.com", 993, False),
+    "gmx":     ("imap.gmx.net", 993, False),
+    "web.de":  ("imap.web.de", 993, False),
+    "mailbox": ("imap.mailbox.org", 993, False),
 }
 
 
@@ -105,11 +109,18 @@ def cmd_add(args):
     print("Presets: %s" % ", ".join(sorted(PRESETS)))
     preset = input("Preset (blank for manual): ").strip().lower()
     if preset and preset in PRESETS:
-        host, port = PRESETS[preset]
-        print("  -> %s:%s" % (host, port))
+        host, port, starttls = PRESETS[preset]
+        print("  -> %s:%s (%s)" % (host, port, "STARTTLS" if starttls else "implicit TLS"))
     else:
         host = input("IMAP host: ").strip()
         port = int(input("Port [993]: ").strip() or 993)
+        # Asked rather than guessed, but the usual ports make a sensible
+        # default. A hand-entered STARTTLS server would otherwise hit exactly
+        # the failure the proton preset used to produce.
+        suggested = port in (143, 1143)
+        answer = input("STARTTLS instead of implicit TLS? [%s]: "
+                       % ("Y/n" if suggested else "y/N")).strip().lower()
+        starttls = answer.startswith("y") if answer else suggested
 
     user = input("Username / email address: ").strip()
     label = input("Bar label [%s]: " % account_id).strip() or account_id
@@ -125,8 +136,11 @@ def cmd_add(args):
         sys.exit("empty password")
 
     store_password(account_id, password)
-    accounts.append({"id": account_id, "label": label, "host": host,
-                     "port": port, "user": user, "folder": folder})
+    entry = {"id": account_id, "label": label, "host": host,
+             "port": port, "user": user, "folder": folder}
+    if starttls:
+        entry["starttls"] = 1
+    accounts.append(entry)
     save(accounts)
     print("\nSaved. Server details in %s, password in the keyring." % ACCOUNTS_FILE)
     print("Testing…\n")
