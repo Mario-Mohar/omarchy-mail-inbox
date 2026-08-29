@@ -175,8 +175,13 @@ def connect(account, readonly=True, folder=None):
     """Log in and select the account's folder. Returns (conn, uidvalidity)."""
     host = str(account.get("host", "")).strip()
     user = str(account.get("user", "")).strip()
-    port = int(account.get("port", 993) or 993)
+    # The default depends on the mode, so it cannot be applied before the mode
+    # is known: implicit TLS listens on 993, STARTTLS on 143. Defaulting to 993
+    # first and writing `port or 143` at the call site never reaches the 143 --
+    # by then the port is 993 and the connection goes out in the clear.
     account_id = str(account.get("id", ""))
+    starttls = bool(int(account.get("starttls", 0) or 0))
+    port = int(account.get("port") or (143 if starttls else 993))
     box = str(folder if folder is not None
               else account.get("folder", "INBOX")).strip() or "INBOX"
 
@@ -186,8 +191,8 @@ def connect(account, readonly=True, folder=None):
     password = require_password(account_id)
     context = ssl.create_default_context()
     try:
-        if int(account.get("starttls", 0)):
-            conn = imaplib.IMAP4(host, port or 143)
+        if starttls:
+            conn = imaplib.IMAP4(host, port)
             conn.starttls(ssl_context=context)
         else:
             conn = imaplib.IMAP4_SSL(host, port, ssl_context=context)

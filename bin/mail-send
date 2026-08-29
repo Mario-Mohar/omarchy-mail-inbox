@@ -80,8 +80,11 @@ def transmit(account, message, recipients):
     host = str(account.get("smtpHost", "")).strip()
     if not host:
         die("account has no smtpHost — add it to accounts.json")
-    port = int(account.get("smtpPort", 465) or 465)
+    # Same as on the IMAP side: the default follows the mode. 465 is implicit
+    # TLS, 587 is STARTTLS -- and `port or 587` further down could never be
+    # reached once the port had already defaulted to 465.
     mode = str(account.get("smtpMode", "ssl")).strip().lower()
+    port = int(account.get("smtpPort") or (587 if mode == "starttls" else 465))
     user = str(account.get("smtpUser") or account.get("user") or "").strip()
     password = require_password(str(account.get("id", "")))
     context = ssl.create_default_context()
@@ -89,12 +92,12 @@ def transmit(account, message, recipients):
     server = None
     try:
         if mode == "starttls":
-            server = smtplib.SMTP(host, port or 587, timeout=30)
+            server = smtplib.SMTP(host, port, timeout=30)
             server.ehlo()
             server.starttls(context=context)
             server.ehlo()
         else:
-            server = smtplib.SMTP_SSL(host, port or 465, timeout=30, context=context)
+            server = smtplib.SMTP_SSL(host, port, timeout=30, context=context)
         server.login(user, password)
         server.send_message(message, from_addr=None, to_addrs=recipients)
     except smtplib.SMTPAuthenticationError:
@@ -125,9 +128,11 @@ def append_to_sent(account, message):
         return ""
     conn = None
     try:
-        conn = imaplib.IMAP4_SSL(str(account["host"]), int(account.get("port", 993) or 993),
-                                 ssl_context=ssl.create_default_context())
-        conn.login(str(account["user"]), require_password(str(account.get("id", ""))))
+        # Reuse the shared connect(): it is the single place that knows whether
+        # this account speaks implicit TLS or STARTTLS, and on which port. The
+        # hardcoded IMAP4_SSL that used to stand here meant a STARTTLS account
+        # could never file its copy, however well the send itself had gone.
+        conn, _ = connect(account, readonly=False, folder=folder)
         status, _ = conn.append('"%s"' % folder.replace('"', ''), "(\\Seen)",
                                 imaplib.Time2Internaldate(time.time()),
                                 message.as_bytes())
