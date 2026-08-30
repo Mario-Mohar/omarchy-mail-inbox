@@ -31,7 +31,7 @@ Optional, to get the two account commands onto your PATH:
 
 The widget does not need that step — it calls the scripts by absolute path.
 
-**Requirements:** Python 3 (standard library only, nothing to pip install) and
+**Requirements:** Python 3 (standard library only, no extra packages) and
 `secret-tool` from libsecret for the keyring.
 
 ## Setup
