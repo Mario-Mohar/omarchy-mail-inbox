@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "themo.mail-inbox",
   "name": "Mail Inbox",
-  "version": "3.2.2",
+  "version": "3.3.0",
   "author": "themo",
   "license": "MIT",
   "description": "Unread mail across all your mailboxes in the Omarchy bar. Plain IMAP, so Gmail (app password) and any other account work through one code path. Click a message to read it in full and reply without leaving the bar.",

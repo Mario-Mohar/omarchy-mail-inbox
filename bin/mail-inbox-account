@@ -5,6 +5,7 @@ Server details go to ~/.config/omarchy/mail-inbox/accounts.json.
 Passwords go to the login keyring — never to that file.
 """
 import argparse
+import collections
 import getpass
 import json
 import os
@@ -20,19 +21,36 @@ ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
 KEYRING_SERVICE = "omarchy-mail-inbox"
 HERE = os.path.dirname(os.path.realpath(__file__))
 
-# host, port, starttls. The third field is not decoration: Proton Bridge
-# listens on 1143 and speaks STARTTLS, so an account written without it gets an
-# implicit-TLS handshake against a port that will not answer one, and the
-# mailbox never connects. Everything else here is implicit TLS on 993.
+# The starttls field is not decoration: Proton Bridge listens on 1143 and
+# speaks STARTTLS, so an account written without it gets an implicit-TLS
+# handshake against a port that will not answer one, and the mailbox never
+# connects. Everything else here is implicit TLS on 993.
+#
+# The smtp fields carry the sending side, so that picking a preset settles
+# replying too. Without them the wizard wrote a read-only account and the
+# first reply failed at send time, after it had been typed.
+Preset = collections.namedtuple(
+    "Preset", "host port starttls smtp_host smtp_port smtp_mode")
+
 PRESETS = {
-    "gmail":   ("imap.gmail.com", 993, False),
-    "proton":  ("127.0.0.1", 1143, True),
-    "icloud":  ("imap.mail.me.com", 993, False),
-    "outlook": ("outlook.office365.com", 993, False),
-    "gmx":     ("imap.gmx.net", 993, False),
-    "web.de":  ("imap.web.de", 993, False),
-    "mailbox": ("imap.mailbox.org", 993, False),
+    # Proton Bridge is the odd one twice over: SMTP is on 1025, not 587.
+    "proton":  Preset("127.0.0.1", 1143, True, "127.0.0.1", 1025, "starttls"),
+    "gmail":   Preset("imap.gmail.com", 993, False, "smtp.gmail.com", 465, "ssl"),
+    "icloud":  Preset("imap.mail.me.com", 993, False, "smtp.mail.me.com", 587, "starttls"),
+    "outlook": Preset("outlook.office365.com", 993, False, "smtp.office365.com", 587, "starttls"),
+    "gmx":     Preset("imap.gmx.net", 993, False, "mail.gmx.net", 587, "starttls"),
+    "web.de":  Preset("imap.web.de", 993, False, "smtp.web.de", 587, "starttls"),
+    "mailbox": Preset("imap.mailbox.org", 993, False, "smtp.mailbox.org", 587, "starttls"),
 }
+
+
+def smtp_mode_for(port):
+    """465 is implicit TLS; 587, 25 and Proton's 1025 are all STARTTLS.
+
+    Same trick as the IMAP side, where the port already decides the default:
+    one fewer question, and the answer that gets guessed wrong by hand.
+    """
+    return "ssl" if port == 465 else "starttls"
 
 
 def load():
@@ -108,9 +126,20 @@ def cmd_add(args):
 
     print("Presets: %s" % ", ".join(sorted(PRESETS)))
     preset = input("Preset (blank for manual): ").strip().lower()
-    if preset and preset in PRESETS:
-        host, port, starttls = PRESETS[preset]
-        print("  -> %s:%s (%s)" % (host, port, "STARTTLS" if starttls else "implicit TLS"))
+    known = preset in PRESETS
+    smtp_host = smtp_port = smtp_mode = None
+    sender = ""
+
+    if known:
+        chosen = PRESETS[preset]
+        host, port, starttls = chosen.host, chosen.port, chosen.starttls
+        smtp_host, smtp_port, smtp_mode = (
+            chosen.smtp_host, chosen.smtp_port, chosen.smtp_mode)
+        print("  -> IMAP %s:%s (%s)"
+              % (host, port, "STARTTLS" if starttls else "implicit TLS"))
+        print("  -> SMTP %s:%s (%s)"
+              % (smtp_host, smtp_port,
+                 "STARTTLS" if smtp_mode == "starttls" else "implicit TLS"))
     else:
         host = input("IMAP host: ").strip()
         port = int(input("Port [993]: ").strip() or 993)
@@ -126,6 +155,24 @@ def cmd_add(args):
     label = input("Bar label [%s]: " % account_id).strip() or account_id
     folder = input("Folder [INBOX]: ").strip() or "INBOX"
 
+    if not known:
+        # Replying is half of what this widget is for, so ask -- but anyone who
+        # only wants to read gets past it with one keystroke. Declining leaves
+        # the fields out of the file entirely, and mail-send keeps saying what
+        # is missing if a reply is attempted anyway.
+        answer = input("\nSet up sending (SMTP) too, so you can reply? [Y/n]: ")
+        if not answer.strip().lower().startswith("n"):
+            smtp_host = input("SMTP host [%s]: " % host).strip() or host
+            # An implicit-TLS mailbox almost always sends on 465 and a STARTTLS
+            # one on 587, so the IMAP answer already picked this.
+            default_port = 587 if starttls else 465
+            smtp_port = int(input("SMTP port [%d]: " % default_port).strip()
+                            or default_port)
+            smtp_mode = smtp_mode_for(smtp_port)
+            print("  -> %s"
+                  % ("STARTTLS" if smtp_mode == "starttls" else "implicit TLS"))
+            sender = input("From address [%s]: " % user).strip()
+
     if preset == "gmail":
         print("\nGmail needs an App Password, not your normal password.")
         print("Create one at https://myaccount.google.com/apppasswords")
@@ -140,6 +187,14 @@ def cmd_add(args):
              "port": port, "user": user, "folder": folder}
     if starttls:
         entry["starttls"] = 1
+    if smtp_host:
+        entry["smtpHost"] = smtp_host
+        entry["smtpPort"] = smtp_port
+        entry["smtpMode"] = smtp_mode
+        # mail-send falls back to `user`, so only a differing address is worth
+        # writing down.
+        if sender and sender != user:
+            entry["from"] = sender
     accounts.append(entry)
     save(accounts)
     print("\nSaved. Server details in %s, password in the keyring." % ACCOUNTS_FILE)
@@ -183,6 +238,27 @@ def cmd_test(args):
     print("OK — %d unread in %s" % (result.get("unread", 0), args.id))
     for m in result.get("messages", [])[:5]:
         print("   %-24s %s" % (m["from"][:24], m["subject"][:60]))
+    report_smtp(args.id)
+
+
+def report_smtp(account_id):
+    """Say whether replying would work, without sending anything.
+
+    A missing SMTP block used to surface only at send time, with the reply
+    already typed. Reading it back off the saved account also proves the
+    wizard wrote what it said it would.
+    """
+    account = next((a for a in load() if a.get("id") == account_id), {})
+    host = str(account.get("smtpHost", "")).strip()
+    if not host:
+        print("SMTP: not configured — reading works, replying will not.")
+        print("      Add smtpHost, smtpPort and smtpMode to %s." % ACCOUNTS_FILE)
+        return
+    mode = str(account.get("smtpMode", "ssl")).strip().lower()
+    port = account.get("smtpPort") or (587 if mode == "starttls" else 465)
+    print("SMTP: %s:%s (%s), replies from %s"
+          % (host, port, "STARTTLS" if mode == "starttls" else "implicit TLS",
+             account.get("from") or account.get("user", "")))
 
 
 def main():

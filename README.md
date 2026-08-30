@@ -40,7 +40,10 @@ The widget does not need that step — it calls the scripts by absolute path.
 ~/.config/omarchy/plugins/themo.mail-inbox/bin/mail-inbox-account add
 ```
 
-Replying additionally needs the SMTP fields below in each account entry.
+The wizard asks for the sending side too, so replying works right after
+setup. Picking a preset settles it without a single question; entering a
+server by hand asks three, and answering `n` skips them if you only want to
+read. `mail-inbox-account test <id>` prints whether sending is configured.
 
 Server details are written to `~/.config/omarchy/mail-inbox/accounts.json`
 (mode 600). The password is stored in the login keyring under the service
@@ -87,7 +90,10 @@ the message was truncated rather than pretending it showed everything.
 | `sentFolder` | filing sent replies | `Sent`, `[Gmail]/Gesendet` |
 | `appendSent` | set `false` for Gmail | Gmail files its own copy |
 
-`smtpMode` is `ssl` (implicit TLS, usually port 465) or `starttls` (usually 587).
+`smtpMode` is `ssl` (implicit TLS, usually port 465) or `starttls` (usually 587);
+the wizard derives it from the port. These fields are filled in for you by
+`mail-inbox-account add` — the table is for editing an account that already
+exists, or for adding sending to one set up before version 3.3.0.
 
 ## Commands
 
