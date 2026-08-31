@@ -1,0 +1,26 @@
+# Explicit on purpose. Ruff's default selection changes between releases, and a
+# lint gate that shifts under you is worse than no gate: it turns an unrelated
+# pull request red. These rules catch mistakes -- undefined names, unused
+# imports, shadowed builtins, a library left executable -- and say nothing about
+# formatting style. The %-formatting throughout bin/ is this project's house
+# style and stays.
+
+line-length = 100
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes: undefined names, unused imports
+    "I",    # import order
+    "B",    # bugbear: likely bugs
+    "EXE",  # shebang and executable bit agree
+]
+ignore = [
+    "E501",  # line length is reported by the formatter, not worth failing a build over
+]
+
+[lint.per-file-ignores]
+# The helpers import a module that only exists on sys.path once conftest.py has
+# put bin/ there, so the import cannot come first.
+"tests/conftest.py" = ["E402"]

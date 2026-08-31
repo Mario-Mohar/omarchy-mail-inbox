@@ -11,12 +11,10 @@ import errno
 import imaplib
 import json
 import os
-import re
 import socket
 import ssl
 import stat
 import subprocess
-from collections import deque
 
 CONFIG_DIR = os.path.expanduser("~/.config/omarchy/mail-inbox")
 ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
