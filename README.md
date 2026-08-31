@@ -190,3 +190,12 @@ mailbox, the action is refused instead.
 A failed poll keeps the last known counts on screen and marks the affected
 mailbox with `!` in the panel list, rather than silently showing zero. The
 tooltip on the bar icon lists every mailbox with its count or its error.
+
+## Contributing
+
+Bug reports, feature requests and pull requests are all welcome — finding
+something that is broken and writing it down is a real contribution, and the
+most useful one.
+
+**[CONTRIBUTING.md](CONTRIBUTING.md)** has the details: what makes a report
+useful, how to send a fix through a fork, and what happens after you submit.
