@@ -1,0 +1,48 @@
+name: Bug report
+description: Something behaves differently than it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a password, an app password, or a full IMAP session.**
+        Redact addresses and hostnames if in doubt.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: The `version` field in manifest.json.
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Mail provider and IMAP host
+      description: Gmail, Fastmail, a self-hosted Dovecot — and whether it uses an app password.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Omarchy and compositor version
+    validations:
+      required: true
+  - type: textarea
+    id: helper
+    attributes:
+      label: Helper output, redacted
+      description: What `bin/mail-check` prints when you run it by hand.
+      render: shell
