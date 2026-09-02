@@ -1,5 +1,7 @@
 # Mail Inbox — Omarchy bar widget
 
+[![codecov](https://codecov.io/gh/Mario-Mohar/omarchy-mail-inbox/graph/badge.svg)](https://codecov.io/gh/Mario-Mohar/omarchy-mail-inbox)
+
 One bar icon for all your mailboxes: the total unread count. Click it and the
 panel lists your mailboxes on the left with their individual counts — pick one
 to see its unread mail on the right. Adding a tenth address costs no bar space.
