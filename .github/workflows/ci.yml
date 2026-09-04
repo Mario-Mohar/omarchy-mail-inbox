@@ -36,7 +36,7 @@ jobs:
       - name: Install check tools
         run: |
           python -m pip install --upgrade pip
-          pip install pytest ruff
+          pip install pytest pytest-cov ruff
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck qt6-declarative-dev-tools
 
@@ -80,7 +80,18 @@ jobs:
       - name: Tests
         id: tests
         continue-on-error: true
-        run: pytest tests/ -v --junit-xml=pytest.xml
+        run: pytest tests/ -v --junit-xml=pytest.xml --cov=bin --cov-report=term --cov-report=xml
+
+      # Codecov keeps the history behind the number and feeds the badge in the
+      # README. It never gates: a bad day at Codecov is no reason to fail a pull
+      # request, and a fork or a Dependabot branch has no secrets to offer
+      # anyway. The repository is public, so the upload needs no token.
+      - name: Coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
 
       - name: Build report
         id: report
