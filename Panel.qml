@@ -38,6 +38,8 @@ Panel {
   readonly property bool detailMode: detail !== null || detailLoading
     || (detailError !== "" && service && service.detailKey !== "")
   readonly property bool sending: service ? service.sending : false
+  readonly property bool partBusyNow: service ? service.partBusy !== "" : false
+  readonly property var attachmentParts: detail && detail.attachmentParts ? detail.attachmentParts : []
 
   // Tracked by id, not index: a refresh may reorder or drop mailboxes and the
   // selection must not silently jump to a different inbox.
@@ -589,6 +591,29 @@ Panel {
                 onClicked: root.closeDetail()
               }
 
+              // The browser loads remote images, tracking pixels included, which
+              // is why this is a button and never the default view.
+              Text {
+                textFormat: Text.PlainText
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(14)
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !root.detailLoading && root.detail !== null && root.detail.hasHtml === true
+                text: "Open in browser  󰖟"
+                color: !root.partBusyNow && browserArea.containsMouse ? root.accent : root.dim
+                opacity: root.partBusyNow ? 0.5 : 1
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+
+                MouseArea {
+                  id: browserArea
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: root.partBusyNow ? Qt.ArrowCursor : Qt.PointingHandCursor
+                  onClicked: root.service.openHtml()
+                }
+              }
+
               Text {
                 // Mail decides what is in these strings. Without this Qt guesses
                 // whether the text is rich text and would render markup from a subject.
@@ -669,13 +694,15 @@ Panel {
                   font.pixelSize: Style.font.body
                 }
 
+                // Older helpers only sent names; then the plain list is all there is.
                 Text {
                   // Mail decides what is in these strings. Without this Qt guesses
                   // whether the text is rich text and would render markup from a subject.
                   textFormat: Text.PlainText
                   width: parent.width - Style.space(28)
                   x: Style.space(14)
-                  visible: root.detail && root.detail.attachments
+                  visible: root.attachmentParts.length === 0
+                    && root.detail && root.detail.attachments
                     && root.detail.attachments.length > 0
                   text: root.detail && root.detail.attachments
                     ? "󰁦  " + root.detail.attachments.join(", ") : ""
@@ -683,6 +710,92 @@ Panel {
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
+                }
+
+                Repeater {
+                  model: root.attachmentParts
+
+                  delegate: Item {
+                    id: attachmentRow
+                    required property var modelData
+                    required property int index
+                    width: readerColumn.width - Style.space(28)
+                    x: Style.space(14)
+                    height: attachmentName.implicitHeight + Style.space(2)
+
+                    Text {
+                      // Mail decides what is in these strings. Without this Qt guesses
+                      // whether the text is rich text and would render markup from a subject.
+                      textFormat: Text.PlainText
+                      id: attachmentName
+                      anchors.left: parent.left
+                      anchors.right: attachmentActions.left
+                      anchors.rightMargin: Style.space(10)
+                      text: "󰁦  " + String(attachmentRow.modelData.name || "")
+                        + "  ·  " + String(attachmentRow.modelData.sizeText || "")
+                      elide: Text.ElideMiddle
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+
+                    Row {
+                      id: attachmentActions
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      spacing: Style.space(12)
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: "Open"
+                        color: !root.partBusyNow && openArea.containsMouse ? root.accent : root.dim
+                        opacity: root.partBusyNow ? 0.5 : 1
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.body
+
+                        MouseArea {
+                          id: openArea
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: root.partBusyNow ? Qt.ArrowCursor : Qt.PointingHandCursor
+                          onClicked: root.service.fetchAttachment(attachmentRow.index, true)
+                        }
+                      }
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: "Save"
+                        color: !root.partBusyNow && saveArea.containsMouse ? root.accent : root.dim
+                        opacity: root.partBusyNow ? 0.5 : 1
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.body
+
+                        MouseArea {
+                          id: saveArea
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: root.partBusyNow ? Qt.ArrowCursor : Qt.PointingHandCursor
+                          onClicked: root.service.fetchAttachment(attachmentRow.index, false)
+                        }
+                      }
+                    }
+                  }
+                }
+
+                Text {
+                  // Helper output; may quote a file name taken from the mail.
+                  textFormat: Text.PlainText
+                  width: parent.width - Style.space(28)
+                  x: Style.space(14)
+                  visible: text !== ""
+                  text: root.service
+                    ? (root.service.partBusy !== "" ? root.service.partBusy + "…"
+                                                    : root.service.partMessage) : ""
+                  wrapMode: Text.WordWrap
+                  color: root.service && root.service.partFailed ? root.urgent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.italic: root.service && root.service.partBusy !== ""
                 }
 
                 PanelSeparator { width: parent.width }

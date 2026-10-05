@@ -75,6 +75,20 @@ part keeps its link targets. None of the mail's own markup is rendered: the
 text is escaped first, so no image is loaded and no remote content is fetched,
 and only `http`, `https` and `mailto` links are ever opened.
 
+Attachments are listed under the header with their size. **Open** hands one to
+your default application, **Save** puts it in your download folder. Only that
+one part is fetched from the server, not the whole message. Files that would be
+run rather than shown (`.desktop`, `.sh`, `.exe` and similar) can be saved but
+not opened from the panel.
+
+**Open in browser** shows the HTML version of a message, for newsletters whose
+layout does not survive as text. This is the one place where the mail's own
+HTML is rendered, and it is rendered by your browser, which loads remote images
+the way any mail client with images switched on would. That includes tracking
+pixels, so the sender can see that and when you opened it. It only happens on
+that explicit click; scripts in the document are switched off by a
+Content-Security-Policy.
+
 Reading never touches the mailbox. `\Seen` is set only by the **Mark read**
 button, so the bar counter cannot drop just because you glanced at something.
 Sending a reply flags the original `\Answered` and files a copy in the
@@ -117,6 +131,8 @@ mail-inbox-account remove <id>    # drop it and clear the keyring entry
 mail-check --all --limit 12       # unread state of every mailbox, as JSON
 mail-read --account <id> --uid N  # one message in full, as JSON
 mail-mark --account <id> --uid N --flag seen [--remove]
+mail-attachment --account <id> --uid N --index I [--open]   # save or open one attachment
+mail-html --account <id> --uid N  # open the HTML version in the browser
 mail-send < request.json          # the reply request arrives on stdin
 ```
 
@@ -174,7 +190,14 @@ Worth knowing before you install any plugin that reads your mail:
   button setting `\Seen`, and sending a reply, which flags the original
   `\Answered` and appends a copy to your Sent folder.
 - **Files:** `~/.config/omarchy/mail-inbox/accounts.json` (mode 600) and its
-  backups. Nothing outside that folder, apart from the optional PATH links.
+  backups. Besides that, only on an explicit click: **Save** writes the
+  attachment to your download folder (`xdg-user-dir DOWNLOAD`, else
+  `~/Downloads`) at mode 600, never replacing an existing file. **Open** and
+  **Open in browser** write to `$XDG_RUNTIME_DIR/omarchy-mail-inbox/` (mode
+  700, files 600), which is cleared on logout; anything there older than a day
+  is removed on the next use. Apart from that, only the optional PATH links.
+- **Other programs:** `xdg-open` for opened attachments and the HTML version,
+  `xdg-user-dir` to find the download folder.
 
 ## Limits
 
@@ -187,8 +210,9 @@ so both sides are bounded rather than trusted:
 | Config writes | created with `O_EXCL` at mode 600 and `fsync`ed before the atomic replace, so there is no window in which the file exists with a wider mode. The directory must be yours and not group- or world-writable. |
 | IMAP search | the UID list is counted in one pass and only a bounded tail is kept, so a mailbox with a very large unread count costs the same memory as a small one. |
 | Helper output | capped at both ends: the scripts bound every string and list they emit, and the widget discards a response larger than 512 KB instead of parsing it. |
-| Stuck helpers | each poll, read and send has a 90 second watchdog that terminates it. |
-| Displayed text | every label renders as plain text, and strings that reach the shared bar tooltip are length-limited with angle brackets removed. Mail decides what is in a subject line. |
+| Attachments | the list comes from the server's `BODYSTRUCTURE`, parsed with a depth and part-count limit. One attachment is at most 50 MB, the HTML version 5 MB; the announced size is checked before anything is downloaded and the download itself is a partial fetch, so a server that understates a size still cannot send more. File names lose any path, control and direction-override characters and a leading dot, and are length-limited. |
+| Stuck helpers | each poll, read, send and attachment fetch has a 90 second watchdog that terminates it. |
+| Displayed text | every label renders as plain text, the message body as rich text that mail-read builds from escaped text, and strings that reach the shared bar tooltip are length-limited with angle brackets removed. Mail decides what is in a subject line. |
 
 ## Notes
 

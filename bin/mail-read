@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mailbody import html_to_text, render_html
 from mailcommon import (MAX_ATTACHMENT_NAMES, AccountError, close, connect, decode_field, die, emit,
                         iso_date, require_account)
+from mailparts import PartError, attachments, decoded_size, fetch_parts, first_html, human_size
 
 MAX_BODY_BYTES = 262144
 MAX_BODY_CHARS = 120000
@@ -37,7 +38,7 @@ def part_text(part):
 
 def extract_body(message):
     """Prefer text/plain; fall back to the first text/html, flattened."""
-    plain, rich, attachments = [], [], []
+    plain, rich, names = [], [], []
     for part in message.walk():
         if part.is_multipart():
             continue
@@ -46,8 +47,8 @@ def extract_body(message):
         if filename or "attachment" in disposition:
             # A message can carry an arbitrary number of parts; only the names
             # are shown, so there is no reason to collect more than a screenful.
-            if len(attachments) < MAX_ATTACHMENT_NAMES:
-                attachments.append(decode_field(filename or "(unnamed)", limit=120))
+            if len(names) < MAX_ATTACHMENT_NAMES:
+                names.append(decode_field(filename or "(unnamed)", limit=120))
             continue
         ctype = part.get_content_type()
         if ctype == "text/plain":
@@ -62,7 +63,7 @@ def extract_body(message):
         kind = "html"
     if not body.strip():
         body, kind = "", "empty"
-    return body[:MAX_BODY_CHARS], kind, attachments
+    return body[:MAX_BODY_CHARS], kind, names
 
 
 def body_html(body):
@@ -74,6 +75,26 @@ def body_html(body):
     """
     rich = render_html(body)
     return rich if len(rich.encode("utf-8")) <= MAX_BODY_HTML_BYTES else ""
+
+
+def structure(conn, uid):
+    """(attachmentParts, hasHtml) from BODYSTRUCTURE, or (None, False) without one.
+
+    Each entry carries the index mail-attachment expects, so the panel never
+    has to work out section numbers itself.
+    """
+    try:
+        leaves = fetch_parts(conn, uid)
+    except PartError:
+        return None, False
+    found = attachments(leaves)[:MAX_ATTACHMENT_NAMES]
+    parts = [{"index": i,
+              "name": decode_field(p["name"] or "(unnamed)", limit=120),
+              "type": p["type"][:80],
+              "size": decoded_size(p),
+              "sizeText": human_size(decoded_size(p))}
+             for i, p in enumerate(found)]
+    return parts, first_html(leaves) is not None
 
 
 def addresses(raw):
@@ -117,7 +138,14 @@ def fetch(account, uid, expect_validity):
 
         message = email.message_from_bytes(header_bytes + b"\r\n" + text_bytes,
                                            policy=email.policy.compat32)
-        body, kind, attachments = extract_body(message)
+        body, kind, names = extract_body(message)
+        parts, has_html = structure(conn, uid)
+        if parts is not None:
+            # The structure sees past the 256 KB that were downloaded, so it is
+            # the better list whenever the server provides one.
+            names = [p["name"] for p in parts]
+        else:
+            has_html = kind == "html"
 
         own = str(account.get("from") or account.get("user") or "").lower()
         reply_to = addresses(message.get("Reply-To", "")) or addresses(message.get("From", ""))
@@ -138,7 +166,9 @@ def fetch(account, uid, expect_validity):
             "body": body,
             "bodyHtml": body_html(body),
             "bodyKind": kind,
-            "attachments": attachments,
+            "attachments": names,
+            "attachmentParts": parts or [],
+            "hasHtml": has_html,
             "truncated": bool(size and size > len(header_bytes) + MAX_BODY_BYTES),
             "messageId": decode_field(message.get("Message-ID", ""), limit=0),
             "references": references,

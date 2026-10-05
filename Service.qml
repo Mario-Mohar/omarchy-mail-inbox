@@ -30,6 +30,12 @@ Item {
   property string detailError: ""
   readonly property bool detailLoading: readProcess.running
 
+  // Saving or opening an attachment, or the HTML version. One at a time; the
+  // message line under the attachments says what happened.
+  property string partBusy: ""         // "" or a short label of what runs
+  property string partMessage: ""
+  property bool partFailed: false
+
   property bool sending: false
   property string sendError: ""
   property string sendWarning: ""
@@ -102,6 +108,8 @@ Item {
     root.detailError = ""
     root.sendError = ""
     root.sendWarning = ""
+    root.partMessage = ""
+    root.partFailed = false
     root.detailKey = accountId + "/" + uid
     readProcess.command = [scriptPath("mail-read"),
                            "--account", String(accountId),
@@ -111,11 +119,50 @@ Item {
   }
 
   function closeMessage() {
+    root.partMessage = ""
+    root.partFailed = false
     root.detail = null
     root.detailKey = ""
     root.detailError = ""
     root.sendError = ""
     root.sendWarning = ""
+  }
+
+  // --------------------------------------------------------- attachments
+  // index is the position in detail.attachmentParts, which mail-attachment
+  // rebuilds from the same BODYSTRUCTURE.
+  function fetchAttachment(index, open) {
+    if (!root.detail || partProcess.running) return
+    var parts = root.detail.attachmentParts || []
+    if (index < 0 || index >= parts.length) return
+    var cmd = [scriptPath("mail-attachment"),
+               "--account", String(root.detail.account),
+               "--uid", String(root.detail.uid),
+               "--uidvalidity", uidValidityOf(root.detail.account),
+               "--index", String(index)]
+    if (open) cmd.push("--open")
+    root.partBusy = (open ? "Opening " : "Saving ") + String(parts[index].name || "")
+    root.partMessage = ""
+    root.partFailed = false
+    partProcess.command = cmd
+    partProcess.running = true
+  }
+
+  function openHtml() {
+    if (!root.detail || partProcess.running) return
+    root.partBusy = "Opening in the browser"
+    root.partMessage = ""
+    root.partFailed = false
+    partProcess.command = [scriptPath("mail-html"),
+                           "--account", String(root.detail.account),
+                           "--uid", String(root.detail.uid),
+                           "--uidvalidity", uidValidityOf(root.detail.account)]
+    partProcess.running = true
+  }
+
+  function homeShort(path) {
+    var home = Quickshell.env("HOME")
+    return home && path.indexOf(home + "/") === 0 ? "~" + path.slice(home.length) : path
   }
 
   // ------------------------------------------------------------ flagging
@@ -227,6 +274,43 @@ Item {
         return
       }
       root.detail = payload
+    }
+  }
+
+  Timer {
+    id: partWatchdog
+    interval: root.watchdogMs
+    onTriggered: {
+      partProcess.signal(15)
+      root.partBusy = ""
+      root.partFailed = true
+      root.partMessage = "timed out"
+    }
+  }
+
+  Process {
+    id: partProcess
+    command: []
+    stdout: StdioCollector { id: partStdout; waitForEnd: true }
+    onRunningChanged: running ? partWatchdog.restart() : partWatchdog.stop()
+    onExited: function (exitCode) {
+      root.partBusy = ""
+      var result
+      try {
+        result = JSON.parse(root.takeOutput(partStdout, "attachment helper"))
+      } catch (e) {
+        result = { "error": "failed (exit " + exitCode + ")" }
+      }
+      if (result.error) {
+        root.partFailed = true
+        root.partMessage = String(result.error)
+      } else if (result.saved) {
+        root.partFailed = false
+        root.partMessage = "Saved to " + root.homeShort(String(result.path || ""))
+      } else {
+        root.partFailed = false
+        root.partMessage = ""
+      }
     }
   }
 
