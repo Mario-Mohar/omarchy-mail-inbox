@@ -978,11 +978,14 @@ Panel {
                   // whether the text is rich text and would render markup from a subject.
                   textFormat: Text.PlainText
                   anchors.left: parent.left
+                  anchors.right: parent.right
                   anchors.top: parent.top
                   anchors.margins: Style.space(8)
+                  // The panel is narrow; without a width the hint ran past the field.
+                  wrapMode: Text.WordWrap
                   visible: root.replyBody === "" && !replyField.activeFocus
                   text: root.canDraft
-                    ? "Write a reply, or a few notes and press Draft…  (Ctrl+Enter sends)"
+                    ? "Write a reply, or a few notes and press Draft.\nCtrl+Enter sends."
                     : "Write a reply…  (Ctrl+Enter sends)"
                   color: Qt.darker(root.foreground, 1.9)
                   font.family: root.fontFamily
