@@ -67,6 +67,14 @@ any attachment names, with a reply box underneath. **Ctrl+Enter** sends,
 **Escape** goes back to the list (and only closes the panel once the message is
 closed, so a stray Escape cannot lose a half-written reply).
 
+The text is shown readable rather than raw: links are clickable and open in
+your browser, and the light Markdown that GitHub, Codecov and most newsletter
+tools put into their plain-text parts (`**bold**`, `## headings`,
+`[label](url)`) is rendered instead of printed. A mail that only has an HTML
+part keeps its link targets. None of the mail's own markup is rendered: the
+text is escaped first, so no image is loaded and no remote content is fetched,
+and only `http`, `https` and `mailto` links are ever opened.
+
 Reading never touches the mailbox. `\Seen` is set only by the **Mark read**
 button, so the bar counter cannot drop just because you glanced at something.
 Sending a reply flags the original `\Answered` and files a copy in the

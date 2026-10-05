@@ -137,6 +137,28 @@ Panel {
     return intro + "\n" + quoted.join("\n")
   }
 
+  function cssColor(c) {
+    function part(v) { return ("0" + Math.round(v * 255).toString(16)).slice(-2) }
+    return "#" + part(c.r) + part(c.g) + part(c.b)
+  }
+
+  // Theme colours for the classes bin/mailbody.py puts into bodyHtml.
+  // pre-wrap keeps the mail's own indentation; the line breaks are <br>.
+  function richBody(fragment) {
+    return "<html><head><style>"
+      + "a { color: " + cssColor(accent) + "; text-decoration: none; }"
+      + " .quote, .dim { color: " + cssColor(dim) + "; }"
+      + "</style></head><body><div style=\"white-space: pre-wrap\">"
+      + fragment + "</div></body></html>"
+  }
+
+  // Only what mailbody.py itself links; a file: or custom-scheme target from
+  // somewhere else must never reach xdg-open.
+  function openLink(link) {
+    var target = String(link || "")
+    if (/^(https?:\/\/|mailto:)/i.test(target)) Qt.openUrlExternally(target)
+  }
+
   Connections {
     target: root.service
     function onReplySent() { root.closeDetail() }
@@ -666,11 +688,21 @@ Panel {
                 PanelSeparator { width: parent.width }
 
                 // Selectable so a code, a link or an address can be copied out.
+                // bodyHtml is built by bin/mailbody.py from fully escaped text:
+                // the only markup in it is <a>, <b>, <br> and class spans, so
+                // RichText here cannot render anything the mail itself wrote.
+                // Without bodyHtml (an old helper, or a huge mail) it stays plain.
                 TextEdit {
+                  id: bodyText
+                  readonly property bool rich: !!(root.detail && root.detail.bodyHtml)
                   width: parent.width - Style.space(28)
                   x: Style.space(14)
                   topPadding: Style.space(6)
-                  text: root.detail ? root.detail.body : ""
+                  textFormat: rich ? TextEdit.RichText : TextEdit.PlainText
+                  text: !root.detail ? ""
+                    : rich ? root.richBody(root.detail.bodyHtml)
+                    : root.detail.body
+                  onLinkActivated: function(link) { root.openLink(link) }
                   readOnly: true
                   selectByMouse: true
                   wrapMode: TextEdit.Wrap
@@ -679,6 +711,10 @@ Panel {
                   selectedTextColor: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
+
+                  HoverHandler {
+                    cursorShape: bodyText.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
+                  }
                 }
 
                 Text {

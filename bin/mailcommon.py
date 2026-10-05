@@ -266,9 +266,13 @@ def iso_date(raw):
 
 
 MAX_EMIT_BYTES = 1024 * 1024
+# The message text itself is the one field that is long by nature. mail-read
+# caps it at its own limit; the generic per-string cap would cut every mail
+# after 2 KB without the panel ever learning that it did.
+LONG_FIELDS = {"body": 120000, "bodyHtml": 600000}
 
 
-def _bound(value, depth=0):
+def _bound(value, depth=0, key=None):
     """Cap every string and list on the way out.
 
     The consumer is a QML StdioCollector that buffers whatever arrives before
@@ -278,9 +282,9 @@ def _bound(value, depth=0):
     if depth > 8:
         return None
     if isinstance(value, str):
-        return value[:MAX_FIELD_VALUE]
+        return value[:LONG_FIELDS.get(key, MAX_FIELD_VALUE)]
     if isinstance(value, dict):
-        return {str(k)[:MAX_FIELD_VALUE]: _bound(v, depth + 1)
+        return {str(k)[:MAX_FIELD_VALUE]: _bound(v, depth + 1, str(k))
                 for k, v in list(value.items())[:MAX_FIELDS_PER_ACCOUNT]}
     if isinstance(value, list):
         return [_bound(v, depth + 1) for v in value[:MAX_ACCOUNTS]]
