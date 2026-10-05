@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Save or open one attachment of a message, fetching only that part.
+
+  mail-attachment --account ID --uid N --uidvalidity V --index I [--open]
+
+The index is the position in mail-read's attachmentParts, which both helpers
+derive from the same BODYSTRUCTURE; UID plus UIDVALIDITY pin the message, and
+a message never changes under its UID, so the index cannot drift.
+
+Without --open the file goes to the XDG download directory under a sanitised
+name and never replaces an existing file. With --open it goes to a private
+directory under $XDG_RUNTIME_DIR and xdg-open is started on it; types that
+xdg-open would run rather than show are refused there and have to be saved.
+"""
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import AccountError, close, connect, die, emit, require_account
+from mailparts import (MAX_ATTACHMENT_BYTES, NEVER_OPEN, PartError, attachments, download_dir,
+                       extension, fetch_parts, fetch_section, open_detached, private_dir,
+                       sanitise_filename, write_new)
+
+
+def run(account, uid, expect_validity, index, want_open):
+    conn = None
+    try:
+        conn, validity = connect(account, readonly=True)
+        if expect_validity and validity and expect_validity != validity:
+            die("mailbox was rebuilt (UIDVALIDITY changed) — refresh and reopen")
+        found = attachments(fetch_parts(conn, uid))
+        if index < 0 or index >= len(found):
+            raise PartError("that attachment is no longer there")
+        part = found[index]
+        name = sanitise_filename(part["name"])
+        if want_open and extension(name) in NEVER_OPEN:
+            raise PartError("%s would be run rather than shown; save it instead" % name)
+        data = fetch_section(conn, uid, part, MAX_ATTACHMENT_BYTES)
+    finally:
+        close(conn)
+
+    if want_open:
+        path = write_new(private_dir(), name, data)
+        open_detached(path)
+    else:
+        path = write_new(download_dir(), name, data)
+    return {"saved": not want_open, "opened": want_open, "path": path,
+            "name": os.path.basename(path), "bytes": len(data), "error": ""}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Save or open one attachment.")
+    parser.add_argument("--account", required=True)
+    parser.add_argument("--uid", required=True)
+    parser.add_argument("--uidvalidity", default="")
+    parser.add_argument("--index", required=True, type=int)
+    parser.add_argument("--open", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        account = require_account(args.account)
+        emit(run(account, args.uid, args.uidvalidity.strip(), args.index, args.open))
+    except (AccountError, PartError) as exc:
+        emit({"saved": False, "opened": False, "path": "", "error": str(exc)})
+    except Exception as exc:
+        emit({"saved": False, "opened": False, "path": "",
+              "error": "%s: %s" % (type(exc).__name__, str(exc)[:150])})
+
+
+if __name__ == "__main__":
+    main()

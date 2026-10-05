@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Open the HTML part of a message in the browser.
+
+  mail-html --account ID --uid N --uidvalidity V
+
+Only ever run on an explicit click. The panel itself never renders a mail's
+HTML; the browser does, and it will load remote images (tracking pixels
+included) the way any mail client with images switched on would. Scripts are
+switched off by a Content-Security-Policy put in front of the document.
+
+The file is written to a private directory under $XDG_RUNTIME_DIR (0700, the
+file 0600), which is a tmpfs and is cleared on logout.
+"""
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailcommon import AccountError, close, connect, die, emit, require_account
+from mailparts import (MAX_HTML_BYTES, PartError, fetch_parts, fetch_section, first_html,
+                       open_detached, private_dir, write_new)
+
+PREAMBLE = ('<meta charset="utf-8">'
+            '<meta http-equiv="Content-Security-Policy" content="script-src \'none\'; '
+            'object-src \'none\'; frame-src \'none\'; form-action \'none\'">\n')
+
+
+def html_document(data, charset):
+    try:
+        text = data.decode(charset or "utf-8", "replace")
+    except LookupError:
+        text = data.decode("utf-8", "replace")
+    return (PREAMBLE + text).encode("utf-8")
+
+
+def run(account, uid, expect_validity):
+    conn = None
+    try:
+        conn, validity = connect(account, readonly=True)
+        if expect_validity and validity and expect_validity != validity:
+            die("mailbox was rebuilt (UIDVALIDITY changed) — refresh and reopen")
+        part = first_html(fetch_parts(conn, uid))
+        if not part:
+            raise PartError("this message has no HTML version")
+        data = fetch_section(conn, uid, part, MAX_HTML_BYTES)
+    finally:
+        close(conn)
+    path = write_new(private_dir(), "message.html", html_document(data, part["charset"]))
+    open_detached(path)
+    return {"opened": True, "path": path, "error": ""}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Open a message's HTML part in the browser.")
+    parser.add_argument("--account", required=True)
+    parser.add_argument("--uid", required=True)
+    parser.add_argument("--uidvalidity", default="")
+    args = parser.parse_args()
+
+    try:
+        account = require_account(args.account)
+        emit(run(account, args.uid, args.uidvalidity.strip()))
+    except (AccountError, PartError) as exc:
+        emit({"opened": False, "path": "", "error": str(exc)})
+    except Exception as exc:
+        emit({"opened": False, "path": "",
+              "error": "%s: %s" % (type(exc).__name__, str(exc)[:150])})
+
+
+if __name__ == "__main__":
+    main()
