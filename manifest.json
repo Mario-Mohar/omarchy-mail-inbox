@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "themo.mail-inbox",
   "name": "Mail Inbox",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "author": "themo",
   "license": "MIT",
   "description": "Unread mail across all your mailboxes in the Omarchy bar. Plain IMAP, so Gmail (app password) and any other account work through one code path. Click a message to read it in full and reply without leaving the bar.",
@@ -18,7 +18,9 @@
     "description": "One bar icon for all mailboxes: total unread count, with a panel that switches between accounts, opens a message in full and sends replies over SMTP. Scales to many addresses without adding bar clutter.",
     "category": "Info",
     "aliases": [
+      "claude",
       "compose",
+      "draft",
       "email",
       "gmail",
       "imap",
@@ -33,7 +35,10 @@
     "defaults": {
       "refreshIntervalSec": 300,
       "maxMessages": 12,
-      "hideWhenEmpty": false
+      "hideWhenEmpty": false,
+      "aiDraft": false,
+      "aiDraftModel": "sonnet",
+      "aiDraftSignature": ""
     },
     "schema": [
       {
@@ -62,6 +67,41 @@
         "label": "Hide when no unread mail",
         "defaultValue": false,
         "description": "Remove the pill from the bar entirely while the mailbox is read."
+      },
+      {
+        "key": "aiDraft",
+        "type": "boolean",
+        "label": "Reply drafts with Claude",
+        "defaultValue": false,
+        "description": "Show a Draft button that writes a reply with the local claude CLI, using what you typed as notes. The open message is sent to Anthropic for this. Needs Claude Code installed and logged in."
+      },
+      {
+        "key": "aiDraftModel",
+        "type": "enum",
+        "label": "Draft model",
+        "defaultValue": "sonnet",
+        "options": [
+          {
+            "value": "sonnet",
+            "label": "Sonnet"
+          },
+          {
+            "value": "haiku",
+            "label": "Haiku (faster)"
+          },
+          {
+            "value": "opus",
+            "label": "Opus (slowest)"
+          }
+        ],
+        "description": "Which Claude model writes the draft."
+      },
+      {
+        "key": "aiDraftSignature",
+        "type": "string",
+        "label": "Draft signature",
+        "defaultValue": "",
+        "description": "Put under every draft, after the closing line. Write \\\\n for a line break. Leave empty for none."
       }
     ]
   }
