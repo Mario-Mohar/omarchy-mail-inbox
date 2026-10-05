@@ -269,7 +269,7 @@ MAX_EMIT_BYTES = 1024 * 1024
 # The message text itself is the one field that is long by nature. mail-read
 # caps it at its own limit; the generic per-string cap would cut every mail
 # after 2 KB without the panel ever learning that it did.
-LONG_FIELDS = {"body": 120000, "bodyHtml": 600000}
+LONG_FIELDS = {"body": 120000, "bodyHtml": 600000, "draft": 20000}
 
 
 def _bound(value, depth=0, key=None):

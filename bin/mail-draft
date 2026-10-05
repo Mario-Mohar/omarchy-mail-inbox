@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Draft a reply with the local Claude CLI. The request arrives on stdin.
+
+stdin, not argv, for the same reason as mail-send: the message and the user's
+notes would otherwise be readable in /proc by every process on the machine.
+
+Request fields: from, subject, date, body (the message being answered),
+notes (what the user already typed), signature, model.
+
+  mail-draft --check    {"available": true|false}, without calling anything
+"""
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from maildraft import DraftError, draft, find_claude
+from mailcommon import emit
+
+MAX_REQUEST_BYTES = 256 * 1024
+
+
+def main():
+    if "--check" in sys.argv[1:]:
+        emit({"available": find_claude() is not None})
+        return
+    raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+    if len(raw) > MAX_REQUEST_BYTES:
+        emit({"draft": "", "error": "request too large"})
+        return
+    try:
+        request = json.loads(raw.decode("utf-8", "replace") or "{}")
+        result = draft(request)
+        result["error"] = ""
+        emit(result)
+    except json.JSONDecodeError:
+        emit({"draft": "", "error": "request is not valid JSON"})
+    except DraftError as exc:
+        emit({"draft": "", "error": str(exc)})
+
+
+if __name__ == "__main__":
+    main()
