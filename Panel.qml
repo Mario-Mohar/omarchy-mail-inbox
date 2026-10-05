@@ -38,6 +38,12 @@ Panel {
   readonly property bool detailMode: detail !== null || detailLoading
     || (detailError !== "" && service && service.detailKey !== "")
   readonly property bool sending: service ? service.sending : false
+  readonly property bool drafting: service ? service.drafting : false
+  // The reply box is disabled while a draft runs and would take Escape with
+  // it, so the key catcher gets focus back and Escape can cancel.
+  onDraftingChanged: if (drafting) keyCatcher.forceActiveFocus()
+  readonly property bool canDraft: service !== null && service.aiDraftEnabled
+    && service.aiDraftAvailable && detail !== null
   readonly property bool partBusyNow: service ? service.partBusy !== "" : false
   readonly property var attachmentParts: detail && detail.attachmentParts ? detail.attachmentParts : []
 
@@ -164,6 +170,11 @@ Panel {
   Connections {
     target: root.service
     function onReplySent() { root.closeDetail() }
+    // The draft replaces what was typed: those notes were its instructions.
+    function onDraftReady(text) {
+      root.replyBody = text
+      replyField.forceActiveFocus()
+    }
   }
 
   function switchPanel(direction) {
@@ -226,7 +237,12 @@ Panel {
       anchors.fill: parent
       // Escape backs out of the open mail first and only then shuts the panel:
       // losing a half-written reply to a stray Escape would be worse.
-      onCloseRequested: root.detailMode ? root.closeDetail() : root.close()
+      // A running draft is the first thing Escape stops.
+      onCloseRequested: {
+        if (root.drafting) root.service.cancelDraft()
+        else if (root.detailMode) root.closeDetail()
+        else root.close()
+      }
       onReturnRequested: if (!root.detailMode) root.refresh()
       onTabRequested: function(direction) { if (!root.detailMode) root.switchPanel(direction) }
       Keys.onUpPressed: if (!root.detailMode) root.cycleAccount(-1)
@@ -932,7 +948,7 @@ Panel {
                     width: replyScroll.width
                     text: root.replyBody
                     onTextChanged: root.replyBody = text
-                    enabled: !root.sending
+                    enabled: !root.sending && !root.drafting
                     selectByMouse: true
                     wrapMode: TextEdit.Wrap
                     color: root.foreground
@@ -965,7 +981,9 @@ Panel {
                   anchors.top: parent.top
                   anchors.margins: Style.space(8)
                   visible: root.replyBody === "" && !replyField.activeFocus
-                  text: "Write a reply…  (Ctrl+Enter sends)"
+                  text: root.canDraft
+                    ? "Write a reply, or a few notes and press Draft…  (Ctrl+Enter sends)"
+                    : "Write a reply…  (Ctrl+Enter sends)"
                   color: Qt.darker(root.foreground, 1.9)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -988,6 +1006,19 @@ Panel {
                 font.pixelSize: Style.font.body
               }
 
+              Text {
+                // Comes from the claude CLI's stderr in the worst case, so it
+                // is shown as plain text like everything else here.
+                textFormat: Text.PlainText
+                width: parent.width
+                visible: root.service && root.service.draftError !== ""
+                wrapMode: Text.WordWrap
+                text: root.service ? "Draft: " + root.service.draftError : ""
+                color: root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
               Item {
                 width: parent.width
                 height: sendButton.implicitHeight
@@ -995,6 +1026,14 @@ Panel {
                 Row {
                   anchors.right: parent.right
                   spacing: Style.space(8)
+
+                  Button {
+                    id: draftButton
+                    visible: root.canDraft
+                    text: root.drafting ? "Drafting…" : "Draft"
+                    enabled: !root.drafting && !root.sending
+                    onClicked: root.service.draftReply(root.replyBody)
+                  }
 
                   Button {
                     id: markButton

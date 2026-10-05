@@ -41,6 +41,21 @@ Item {
   property string sendWarning: ""
   signal replySent()
 
+  // Reply drafts through the local Claude CLI. Off unless the user turns the
+  // setting on, because the open message is sent to Anthropic for it.
+  readonly property bool aiDraftEnabled: boolSetting("aiDraft", false)
+  readonly property string aiDraftModel: {
+    var m = String(settings && settings.aiDraftModel ? settings.aiDraftModel : "sonnet")
+    return ["sonnet", "haiku", "opus"].indexOf(m) >= 0 ? m : "sonnet"
+  }
+  readonly property string aiDraftSignature: String(settings && settings.aiDraftSignature
+                                                    ? settings.aiDraftSignature : "")
+  property bool aiDraftAvailable: false     // claude found by mail-draft --check
+  readonly property bool drafting: draftProcess.running
+  property string draftError: ""
+  property string draftKey: ""              // detailKey the running draft belongs to
+  signal draftReady(string text)
+
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 300, 60, 3600)
   readonly property int maxMessages: intSetting("maxMessages", 12, 1, 50)
   readonly property bool configured: accounts.length > 0
@@ -110,6 +125,7 @@ Item {
     root.sendWarning = ""
     root.partMessage = ""
     root.partFailed = false
+    cancelDraft()
     root.detailKey = accountId + "/" + uid
     readProcess.command = [scriptPath("mail-read"),
                            "--account", String(accountId),
@@ -119,6 +135,7 @@ Item {
   }
 
   function closeMessage() {
+    cancelDraft()
     root.partMessage = ""
     root.partFailed = false
     root.detail = null
@@ -175,6 +192,40 @@ Item {
                            "--uidvalidity", uidValidityOf(accountId)]
     markProcess.running = true
   }
+
+  // -------------------------------------------------------------- drafts
+  // notes: whatever is already in the reply box, used as instructions.
+  function draftReply(notes) {
+    if (!root.detail || !root.aiDraftEnabled || draftProcess.running) return
+    root.draftError = ""
+    root.draftKey = root.detailKey
+    draftProcess.payload = JSON.stringify({
+      "from": root.detail.from || "",
+      "subject": root.detail.subject || "",
+      "date": root.detail.date || "",
+      "body": root.detail.body || "",
+      "notes": String(notes || ""),
+      "signature": root.aiDraftSignature,
+      "model": root.aiDraftModel
+    })
+    draftProcess.command = [scriptPath("mail-draft")]
+    draftProcess.running = true
+  }
+
+  function cancelDraft() {
+    root.draftKey = ""
+    root.draftError = ""
+    if (draftProcess.running) draftProcess.signal(15)
+  }
+
+  function checkDraftAvailable() {
+    if (!root.aiDraftEnabled || checkDraftProcess.running) return
+    checkDraftProcess.command = [scriptPath("mail-draft"), "--check"]
+    checkDraftProcess.running = true
+  }
+
+  onAiDraftEnabledChanged: checkDraftAvailable()
+  Component.onCompleted: checkDraftAvailable()
 
   // ------------------------------------------------------------- sending
   // request: {account, to[], cc[], subject, body, inReplyTo, references, uid}
@@ -321,6 +372,66 @@ Item {
     onExited: function (exitCode) {
       // The unread counts are now wrong either way; let the poll settle it.
       root.refresh()
+    }
+  }
+
+  Process {
+    id: checkDraftProcess
+    command: []
+    stdout: StdioCollector { id: checkDraftStdout; waitForEnd: true }
+    onExited: function (exitCode) {
+      try {
+        root.aiDraftAvailable = exitCode === 0
+          && JSON.parse(root.takeOutput(checkDraftStdout, "mail-draft")).available === true
+      } catch (e) {
+        root.aiDraftAvailable = false
+      }
+    }
+  }
+
+  Timer {
+    id: draftWatchdog
+    interval: root.watchdogMs
+    onTriggered: {
+      draftProcess.signal(15)
+      root.draftError = "mail-draft timed out"
+    }
+  }
+
+  Process {
+    id: draftProcess
+    property string payload: ""
+    command: []
+    stdinEnabled: true
+    stdout: StdioCollector { id: draftStdout; waitForEnd: true }
+    onRunningChanged: running ? draftWatchdog.restart() : draftWatchdog.stop()
+    onStarted: {
+      write(payload)
+      payload = ""
+      stdinEnabled = false
+    }
+    onExited: function (exitCode) {
+      stdinEnabled = true
+      // Cancelled, or the user has moved on to another message: the draft
+      // must not land in a reply to something else.
+      if (root.draftKey === "" || root.draftKey !== root.detailKey) return
+      root.draftKey = ""
+      if (exitCode !== 0) {
+        root.draftError = "mail-draft failed (exit " + exitCode + ")"
+        return
+      }
+      var result
+      try {
+        result = JSON.parse(root.takeOutput(draftStdout, "mail-draft"))
+      } catch (e) {
+        root.draftError = "mail-draft returned unparseable output"
+        return
+      }
+      if (result.error || !result.draft) {
+        root.draftError = result.error ? String(result.error) : "no draft came back"
+        return
+      }
+      root.draftReady(String(result.draft))
     }
   }
 

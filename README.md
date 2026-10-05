@@ -89,6 +89,22 @@ pixels, so the sender can see that and when you opened it. It only happens on
 that explicit click; scripts in the document are switched off by a
 Content-Security-Policy.
 
+**Draft** writes a reply for you with Claude, if you switch it on in the widget
+settings and have [Claude Code](https://claude.com/claude-code) installed and
+logged in. Type a few notes into the reply box first ("Thursday works, I'll
+bring the documents") and Draft turns them into a complete mail in the
+language and tone of the message; without notes it writes a short, sensible
+answer. The draft replaces your notes in the box and is never sent on its own.
+You read it, change what you like and send it as usual. Escape stops a draft
+that is still running.
+
+Draft is off by default for a reason: it sends the open message, your notes and
+your signature to Anthropic through the `claude` command. The command runs with
+every tool switched off, no MCP servers, no settings files and no saved
+session, in an empty temporary directory, so the model can only answer with
+text. The message is passed in as data and the model is told not to follow
+anything written inside it.
+
 Reading never touches the mailbox. `\Seen` is set only by the **Mark read**
 button, so the bar counter cannot drop just because you glanced at something.
 Sending a reply flags the original `\Answered` and files a copy in the
@@ -158,6 +174,9 @@ omarchy shell themo.mail-inbox refresh   # poll every mailbox now
 | Refresh interval | 300 s | how often the mailboxes are polled |
 | Messages in panel | 12 | how many unread messages per mailbox are listed |
 | Hide when no unread mail | off | remove the icon while everything is read |
+| Reply drafts with Claude | off | show the **Draft** button (sends the open message to Anthropic) |
+| Draft model | Sonnet | Sonnet, Haiku (faster) or Opus |
+| Draft signature | empty | put under every draft; `\n` for a line break |
 
 Middle-click or scroll on the icon forces an immediate check. In the panel,
 Up/Down switch mailboxes and Enter re-checks.
@@ -181,8 +200,10 @@ plugin's:
 
 Worth knowing before you install any plugin that reads your mail:
 
-- **Network:** IMAP and SMTP to the servers you configure, nothing else. No
-  telemetry, no third-party service.
+- **Network:** IMAP and SMTP to the servers you configure. No telemetry. The
+  one exception is the optional **Draft** button: when you switch it on and
+  press it, the open message, your notes and your signature go to Anthropic
+  through the local `claude` command. Off by default.
 - **Credentials:** read from the login keyring at the moment they are needed and
   passed to Python through the environment, never as a command-line argument and
   never written to disk.
@@ -197,7 +218,8 @@ Worth knowing before you install any plugin that reads your mail:
   700, files 600), which is cleared on logout; anything there older than a day
   is removed on the next use. Apart from that, only the optional PATH links.
 - **Other programs:** `xdg-open` for opened attachments and the HTML version,
-  `xdg-user-dir` to find the download folder.
+  `xdg-user-dir` to find the download folder, and `claude -p` for drafts when
+  that setting is on.
 
 ## Limits
 
