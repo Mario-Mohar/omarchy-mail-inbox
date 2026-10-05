@@ -10,31 +10,18 @@ flag says when that happened, so the panel never implies it showed everything.
 import argparse
 import email
 import email.policy
-import html
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mailbody import html_to_text, render_html
 from mailcommon import (MAX_ATTACHMENT_NAMES, AccountError, close, connect, decode_field, die, emit,
                         iso_date, require_account)
 
 MAX_BODY_BYTES = 262144
 MAX_BODY_CHARS = 120000
-
-TAG_BREAK = re.compile(r"(?i)<\s*(br|/p|/div|/tr|/li|/h[1-6])\s*[^>]*>")
-TAG_DROP = re.compile(r"(?is)<\s*(script|style|head)[^>]*>.*?<\s*/\s*\1\s*>")
-TAG_ANY = re.compile(r"(?s)<[^>]+>")
-BLANK_RUN = re.compile(r"\n{3,}")
-
-
-def html_to_text(raw):
-    text = TAG_DROP.sub(" ", raw)
-    text = TAG_BREAK.sub("\n", text)
-    text = TAG_ANY.sub("", text)
-    text = html.unescape(text)
-    text = "\n".join(line.rstrip() for line in text.splitlines())
-    return BLANK_RUN.sub("\n\n", text).strip()
+MAX_BODY_HTML_BYTES = 600000
 
 
 def part_text(part):
@@ -76,6 +63,17 @@ def extract_body(message):
     if not body.strip():
         body, kind = "", "empty"
     return body[:MAX_BODY_CHARS], kind, attachments
+
+
+def body_html(body):
+    """Rich text for the reader, or '' to let the panel fall back to plain text.
+
+    Escaping and link targets make the rich form longer than the text. Rather
+    than let a huge mail push the whole response over MAX_EMIT_BYTES and lose
+    the message entirely, it is dropped and the plain body is shown.
+    """
+    rich = render_html(body)
+    return rich if len(rich.encode("utf-8")) <= MAX_BODY_HTML_BYTES else ""
 
 
 def addresses(raw):
@@ -138,6 +136,7 @@ def fetch(account, uid, expect_validity):
             "subject": decode_field(message.get("Subject", "")) or "(no subject)",
             "date": iso_date(message.get("Date", "")),
             "body": body,
+            "bodyHtml": body_html(body),
             "bodyKind": kind,
             "attachments": attachments,
             "truncated": bool(size and size > len(header_bytes) + MAX_BODY_BYTES),
