@@ -458,6 +458,9 @@ Item {
       stdinEnabled = false   // closing stdin is what tells mail-send to start
     }
     onExited: function (exitCode) {
+      // Reopen stdin for the next reply; left closed, the second send of a
+      // session would hand mail-send an empty request.
+      stdinEnabled = true
       root.sending = false
       if (exitCode !== 0) {
         root.sendError = "mail-send failed (exit " + exitCode + ")"
