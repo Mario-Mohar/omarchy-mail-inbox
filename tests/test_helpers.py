@@ -49,7 +49,7 @@ def test_check_all_reports_an_unreadable_config_as_json(tmp_path):
     proc = run("mail-check", ["--all"], home)
     assert proc.returncode == 0, proc.stderr
     result = json.loads(proc.stdout)
-    assert result["totalUnread"] == 0 and result["accounts"] == []
+    assert "accounts" not in result  # so the widget keeps the last counts
     assert "chmod 600" in result["error"]
 
 

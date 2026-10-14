@@ -98,12 +98,14 @@ def main():
     except AccountError as exc:
         # An unreadable accounts.json is the one failure that concerns every
         # mailbox at once. Say so in the payload, so the panel can show the
-        # reason (often "run: chmod 600 ...") instead of an exit code.
+        # reason (often "run: chmod 600 ...") instead of an exit code. --all
+        # leaves out the account list on purpose: the widget then keeps the
+        # last known counts, as it does for any other failed poll.
         if args.account:
             emit({"id": args.account, "label": args.account, "unread": 0,
                   "messages": [], "uidvalidity": "", "error": str(exc)})
         else:
-            emit({"totalUnread": 0, "accounts": [], "error": str(exc)})
+            emit({"error": str(exc)})
         return
 
     if args.account:
