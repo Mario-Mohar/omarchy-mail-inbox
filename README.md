@@ -138,7 +138,7 @@ exists, or for adding sending to one set up before version 3.3.0.
 ## Commands
 
 ```bash
-mail-inbox-setup                  # fill in missing passwords for all mailboxes
+mail-inbox-setup                  # fill in missing passwords (starts `add` when there is no mailbox)
 mail-inbox-account add            # add a mailbox, interactively
 mail-inbox-account list           # show configured ids
 mail-inbox-account test <id>      # poll once and print the result
@@ -191,7 +191,7 @@ omarchy plugin remove themo.mail-inbox
 Two things deliberately survive that, because they are yours and not the
 plugin's:
 
-- `~/.config/omarchy/mail-inbox/` — your mailbox list and its backups.
+- `~/.config/omarchy/mail-inbox/` — your mailbox list.
 - The keyring entries under the service `omarchy-mail-inbox`. List them with
   `secret-tool search service omarchy-mail-inbox`, remove one with
   `secret-tool clear service omarchy-mail-inbox account <id>`.
@@ -204,14 +204,18 @@ Worth knowing before you install any plugin that reads your mail:
   one exception is the optional **Draft** button: when you switch it on and
   press it, the open message, your notes and your signature go to Anthropic
   through the local `claude` command. Off by default.
-- **Credentials:** read from the login keyring at the moment they are needed and
-  passed to Python through the environment, never as a command-line argument and
-  never written to disk.
+- **Credentials:** each helper reads the password itself at the moment it needs
+  it, by running `secret-tool lookup` and taking the answer from its output.
+  To store one, `mail-inbox-account add` pipes it into `secret-tool store` on
+  stdin and `mail-inbox-setup` lets `secret-tool` prompt for it. It never
+  appears as a command-line argument or in the environment, and the plugin
+  never writes it to disk.
 - **Your mailbox:** read-only except for two explicit actions — the **Mark read**
   button setting `\Seen`, and sending a reply, which flags the original
   `\Answered` and appends a copy to your Sent folder.
-- **Files:** `~/.config/omarchy/mail-inbox/accounts.json` (mode 600) and its
-  backups. Besides that, only on an explicit click: **Save** writes the
+- **Files:** `~/.config/omarchy/mail-inbox/accounts.json` (mode 600), replaced
+  atomically through a temporary `accounts.json.tmp` next to it; no backups are
+  kept. Besides that, only on an explicit click: **Save** writes the
   attachment to your download folder (`xdg-user-dir DOWNLOAD`, else
   `~/Downloads`) at mode 600, never replacing an existing file. **Open** and
   **Open in browser** write to `$XDG_RUNTIME_DIR/omarchy-mail-inbox/` (mode

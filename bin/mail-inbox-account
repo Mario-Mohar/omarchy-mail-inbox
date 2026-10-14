@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mailcommon import load_accounts  # noqa: E402  (hardened reader)
+from mailcommon import AccountError, load_accounts  # noqa: E402  (hardened reader)
 
 CONFIG_DIR = os.path.expanduser("~/.config/omarchy/mail-inbox")
 ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
@@ -229,10 +229,17 @@ def cmd_test(args):
     proc = subprocess.run([os.path.join(HERE, "mail-check"),
                            "--account", args.id, "--limit", "5"],
                           capture_output=True)
+    out = proc.stdout.decode("utf-8", "replace").strip()
+    if proc.returncode != 0 or not out:
+        # A crash prints nothing on stdout. Reading that as "{}" used to
+        # report OK with 0 unread for a mailbox that was never polled.
+        detail = proc.stderr.decode("utf-8", "replace").strip().splitlines()
+        sys.exit("FAILED: mail-check exited %d%s" % (
+            proc.returncode, ": " + detail[-1][:200] if detail else ""))
     try:
-        result = json.loads(proc.stdout.decode() or "{}")
+        result = json.loads(out)
     except ValueError:
-        sys.exit("backend returned junk: %s" % proc.stdout.decode()[:200])
+        sys.exit("backend returned junk: %s" % out[:200])
     if result.get("error"):
         sys.exit("FAILED: %s" % result["error"])
     print("OK — %d unread in %s" % (result.get("unread", 0), args.id))
@@ -276,7 +283,10 @@ def main():
     p_test.add_argument("id")
     p_test.set_defaults(func=cmd_test)
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except AccountError as exc:
+        sys.exit(str(exc))
 
 
 if __name__ == "__main__":

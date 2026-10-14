@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import tempfile
 
@@ -147,6 +148,24 @@ def command(claude, model):
             "--system-prompt", SYSTEM_PROMPT]
 
 
+def stop(proc):
+    """End the CLI and everything it started.
+
+    It runs in a session of its own, so one signal to the process group reaches
+    whatever it spawned too. Terminate first, then kill whatever is left.
+    """
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            pass
+        try:
+            proc.communicate(timeout=2)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def draft(request, timeout=TIMEOUT_SEC):
     req = parse_request(request)
     claude = find_claude()
@@ -155,18 +174,27 @@ def draft(request, timeout=TIMEOUT_SEC):
     with tempfile.TemporaryDirectory(prefix="mail-draft-") as workdir:
         os.chmod(workdir, 0o700)
         try:
-            proc = subprocess.run(command(claude, req["model"]), input=build_prompt(req),
-                                  capture_output=True, text=True, timeout=timeout,
-                                  cwd=workdir)
-        except subprocess.TimeoutExpired as exc:
-            raise DraftError("claude took longer than %d seconds" % timeout) from exc
+            proc = subprocess.Popen(command(claude, req["model"]), stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, cwd=workdir, start_new_session=True)
         except OSError as exc:
             raise DraftError("claude could not be started: %s" % str(exc)[:120]) from exc
+        # Anything that ends the wait early -- the timeout, or the panel
+        # cancelling the draft, which mail-draft turns into SystemExit -- must
+        # not leave the CLI running on and spending API calls.
+        try:
+            stdout, stderr = proc.communicate(build_prompt(req), timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            stop(proc)
+            raise DraftError("claude took longer than %d seconds" % timeout) from exc
+        except BaseException:
+            stop(proc)
+            raise
     if proc.returncode != 0:
-        detail = " ".join((proc.stderr or proc.stdout or "").split())[:160]
+        detail = " ".join((stderr or stdout or "").split())[:160]
         raise DraftError("claude failed (exit %d)%s" % (proc.returncode,
                                                          ": " + detail if detail else ""))
-    text = tidy(proc.stdout or "")
+    text = tidy(stdout or "")
     if not text:
         raise DraftError("claude returned an empty draft")
     return {"draft": text, "model": req["model"]}

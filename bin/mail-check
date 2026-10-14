@@ -93,7 +93,20 @@ def main():
     args = parser.parse_args()
     limit = max(1, min(args.limit, MAX_FETCH))
 
-    accounts = [a for a in load_accounts() if isinstance(a, dict) and a.get("id")]
+    try:
+        accounts = [a for a in load_accounts() if isinstance(a, dict) and a.get("id")]
+    except AccountError as exc:
+        # An unreadable accounts.json is the one failure that concerns every
+        # mailbox at once. Say so in the payload, so the panel can show the
+        # reason (often "run: chmod 600 ...") instead of an exit code. --all
+        # leaves out the account list on purpose: the widget then keeps the
+        # last known counts, as it does for any other failed poll.
+        if args.account:
+            emit({"id": args.account, "label": args.account, "unread": 0,
+                  "messages": [], "uidvalidity": "", "error": str(exc)})
+        else:
+            emit({"error": str(exc)})
+        return
 
     if args.account:
         match = [a for a in accounts if str(a.get("id")) == args.account]

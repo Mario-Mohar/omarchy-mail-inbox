@@ -16,8 +16,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mailbody import html_to_text, render_html
-from mailcommon import (MAX_ATTACHMENT_NAMES, AccountError, close, connect, decode_field, die, emit,
-                        iso_date, require_account)
+from mailcommon import (MAX_ATTACHMENT_NAMES, MAX_REFERENCES, AccountError, close, connect,
+                        decode_field, die, emit, iso_date, require_account)
 from mailparts import PartError, attachments, decoded_size, fetch_parts, first_html, human_size
 
 MAX_BODY_BYTES = 262144
@@ -87,6 +87,10 @@ def structure(conn, uid):
         leaves = fetch_parts(conn, uid)
     except PartError:
         return None, False
+    except Exception:
+        # The body is already here. A structure this parser trips over costs
+        # the attachment list, not the whole message.
+        return None, False
     found = attachments(leaves)[:MAX_ATTACHMENT_NAMES]
     parts = [{"index": i,
               "name": decode_field(p["name"] or "(unnamed)", limit=120),
@@ -95,6 +99,27 @@ def structure(conn, uid):
               "sizeText": human_size(decoded_size(p))}
              for i, p in enumerate(found)]
     return parts, first_html(leaves) is not None
+
+
+def thread_references(references, message_id, limit=MAX_REFERENCES):
+    """References for a reply: the original's, then its own Message-ID.
+
+    A long thread is shortened on ID boundaries, never inside one. What stays
+    is what threading depends on: the first ID (the thread root) and the
+    newest ones, ending with the Message-ID of the mail being answered.
+    """
+    ids = (references + " " + message_id).split()
+    if len(" ".join(ids)) <= limit:
+        return " ".join(ids)
+    root = ids[0] if len(ids[0]) <= limit // 4 else None
+    budget = limit - (len(root) + 1 if root else 0)
+    newest = []
+    for ref in reversed(ids[1:] if root else ids):
+        if len(ref) + 1 > budget:
+            break
+        newest.append(ref)
+        budget -= len(ref) + 1
+    return " ".join(([root] if root else []) + newest[::-1])
 
 
 def addresses(raw):
@@ -152,8 +177,8 @@ def fetch(account, uid, expect_validity):
         cc_all = [a for a in addresses(message.get("To", "")) + addresses(message.get("Cc", ""))
                   if a.lower() != own and a.lower() not in {r.lower() for r in reply_to}]
 
-        references = " ".join((decode_field(message.get("References", ""), limit=0) + " "
-                               + decode_field(message.get("Message-ID", ""), limit=0)).split())
+        references = thread_references(decode_field(message.get("References", ""), limit=0),
+                                       decode_field(message.get("Message-ID", ""), limit=0))
 
         return {
             "uid": str(uid),
@@ -172,6 +197,9 @@ def fetch(account, uid, expect_validity):
             "truncated": bool(size and size > len(header_bytes) + MAX_BODY_BYTES),
             "messageId": decode_field(message.get("Message-ID", ""), limit=0),
             "references": references,
+            # The mailbox generation this UID was read under. A reply hands it
+            # back to mail-send, so flagging the original can check it.
+            "uidvalidity": validity,
             "replyTo": reply_to,
             "replyAllCc": cc_all,
             "error": "",

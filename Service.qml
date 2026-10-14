@@ -110,7 +110,8 @@ Item {
     return a && a.uidvalidity ? String(a.uidvalidity) : ""
   }
 
-  // Opens the account setup helper in the user's terminal.
+  // Opens the account setup helper in the user's terminal. With no mailbox
+  // configured yet, mail-inbox-setup hands over to `mail-inbox-account add`.
   function openSetup() {
     Quickshell.execDetached(["omarchy-launch-terminal", scriptPath("mail-inbox-setup")])
   }
@@ -228,7 +229,7 @@ Item {
   Component.onCompleted: checkDraftAvailable()
 
   // ------------------------------------------------------------- sending
-  // request: {account, to[], cc[], subject, body, inReplyTo, references, uid}
+  // request: {account, to[], cc[], subject, body, inReplyTo, references, uid, uidvalidity}
   function sendReply(request) {
     if (root.sending || !request) return
     root.sendError = ""
@@ -252,9 +253,32 @@ Item {
     root.generatedAt = new Date()
     root.error = payload.error ? String(payload.error) : ""
     if (Array.isArray(payload.accounts)) {
-      root.accounts = payload.accounts
-      root.totalUnread = parseInt(payload.totalUnread, 10) || 0
+      root.accounts = keepLastCounts(payload.accounts)
+      var total = 0
+      for (var i = 0; i < root.accounts.length; i++)
+        total += parseInt(root.accounts[i].unread, 10) || 0
+      root.totalUnread = total
     }
+  }
+
+  // A mailbox that failed this poll reports unread 0. Showing that would make
+  // the bar total drop on every timeout, so it keeps the counts, messages and
+  // UIDVALIDITY of the last poll that reached it, and only its error is new.
+  function keepLastCounts(fresh) {
+    var merged = []
+    for (var i = 0; i < fresh.length; i++) {
+      var entry = fresh[i]
+      var last = entry && entry.error ? accountById(entry.id) : null
+      if (last) {
+        entry = Object.assign({}, entry, {
+          "unread": last.unread,
+          "messages": last.messages,
+          "uidvalidity": last.uidvalidity
+        })
+      }
+      merged.push(entry)
+    }
+    return merged
   }
 
   // A StdioCollector buffers everything the helper writes before anything gets

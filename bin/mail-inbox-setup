@@ -1,17 +1,42 @@
 #!/usr/bin/env bash
 # Asks for the password of every configured account and tests the connection.
+# With no account configured yet it starts the wizard instead, so the panel's
+# "Add a mailbox" button lands somewhere that can actually add one.
 set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-ACCOUNTS="$HOME/.config/omarchy/mail-inbox/accounts.json"
 
 echo "Omarchy Mail Inbox — store passwords"
 echo
 
-mapfile -t IDS < <(python3 -c "
-import json
-d=json.load(open('$ACCOUNTS'))
-for a in d['accounts']: print(a['id'], a['user'], sep='\t')
-")
+# The same hardened reader the widget uses: it refuses a file with the wrong
+# owner or mode and says how to fix it, rather than this script crashing.
+if ! listing="$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from mailcommon import AccountError, load_accounts
+try:
+    accounts = load_accounts()
+except AccountError as exc:
+    sys.exit(str(exc))
+for a in accounts:
+    if a.get("id"):
+        print(a["id"], a.get("user", ""), sep="\t")
+' "$HERE")"; then
+  echo
+  read -r -p "Fix that and run this again. Press Enter to close. " _
+  exit 1
+fi
+
+if [ -z "$listing" ]; then
+  echo "No mailbox configured yet, starting the wizard."
+  echo
+  "$HERE/mail-inbox-account" add
+  echo
+  read -r -p "Press Enter to close. " _
+  exit 0
+fi
+
+mapfile -t IDS <<< "$listing"
 
 for line in "${IDS[@]}"; do
   id="${line%%$'\t'*}"; user="${line#*$'\t'}"

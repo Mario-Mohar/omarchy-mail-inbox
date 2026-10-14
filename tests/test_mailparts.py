@@ -55,6 +55,24 @@ def test_nested_sections_rfc2231_and_html():
     assert html["section"] == "1.1.2" and html["charset"] == "iso-8859-1"
 
 
+def test_unknown_charset_in_a_continuation_falls_back_to_utf8():
+    payload = [b'1 (UID 4 BODYSTRUCTURE (("text" "plain" NIL NIL NIL "7bit" 1 1 NIL NIL NIL)'
+               b'("application" "pdf" ("name*0*" "x-unknown\'\'r%C3%A9sum" "name*1*" "%C3%A9.pdf")'
+               b' NIL NIL "base64" 8 NIL NIL NIL) "mixed" NIL NIL NIL))']
+    found = mailparts.attachments(parts_of(payload))
+    assert found[0]["name"] == "r\u00e9sum\u00e9.pdf"
+
+
+def test_a_structure_the_parser_trips_over_costs_only_the_part_list(monkeypatch):
+    reader = load("mail-read")
+
+    def broken(conn, uid):
+        raise LookupError("unknown encoding: x-unknown")
+
+    monkeypatch.setattr(reader, "fetch_parts", broken)
+    assert reader.structure(None, "7") == (None, False)
+
+
 def test_literal_strings():
     found = mailparts.attachments(parts_of(LITERAL))
     assert found[0]["name"] == 'odd "name'
