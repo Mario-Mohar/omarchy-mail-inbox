@@ -102,3 +102,38 @@ def test_setup_explains_an_unreadable_config(tmp_path):
                           env=dict(os.environ, HOME=str(home)))
     assert proc.returncode == 1
     assert "chmod 600" in proc.stderr and "Traceback" not in proc.stderr
+
+
+# ---- #15: References in long threads -----------------------------------------------
+
+def thread(count):
+    return ["<%04d.reply@mail.example.com>" % i for i in range(count)]
+
+
+def test_references_of_a_long_thread_survive_emit(capsys):
+    import mailcommon
+
+    reader = load("mail-read")
+    ids = thread(100)
+    refs = reader.thread_references(" ".join(ids[:-1]), ids[-1])
+    assert len(refs) > mailcommon.MAX_FIELD_VALUE
+    mailcommon.emit({"references": refs})
+    assert json.loads(capsys.readouterr().out)["references"].split() == ids
+
+
+def test_references_are_trimmed_on_id_boundaries():
+    reader = load("mail-read")
+    ids = thread(400)
+    refs = reader.thread_references(" ".join(ids[:-1]), ids[-1], limit=2000)
+    kept = refs.split()
+    assert len(refs) <= 2000
+    assert kept[0] == ids[0]           # the thread root
+    assert kept[-1] == ids[-1]         # the message being answered
+    assert kept[1:] == ids[-(len(kept) - 1):]
+    assert all(r.startswith("<") and r.endswith(">") for r in kept)
+
+
+def test_an_oversized_root_id_does_not_crowd_out_the_newest():
+    reader = load("mail-read")
+    refs = reader.thread_references("<%s@x> <b@x>" % ("a" * 900), "<c@x>", limit=600)
+    assert refs == "<b@x> <c@x>"
