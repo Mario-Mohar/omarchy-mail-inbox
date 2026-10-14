@@ -80,3 +80,25 @@ def test_account_test_fails_when_mail_check_crashes(monkeypatch, capsys):
         helper.cmd_test(helper.argparse.Namespace(id="work"))
     assert "FAILED" in str(exc.value) and "KeyError" in str(exc.value)
     assert "OK" not in capsys.readouterr().out
+
+
+# ---- #12: "Add a mailbox" on a fresh install -------------------------------------
+
+def test_setup_without_accounts_starts_the_wizard(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    proc = subprocess.run(["bash", str(BIN / "mail-inbox-setup")], input="",
+                          capture_output=True, text=True, timeout=30,
+                          env=dict(os.environ, HOME=str(home)))
+    assert "FileNotFoundError" not in proc.stderr
+    assert "Adding a mailbox" in proc.stdout
+    assert not (home / ".config" / "omarchy" / "mail-inbox" / "accounts.json").exists()
+
+
+def test_setup_explains_an_unreadable_config(tmp_path):
+    home = fake_home(tmp_path, {"accounts": [{"id": "work", "user": "a@b"}]}, mode=0o644)
+    proc = subprocess.run(["bash", str(BIN / "mail-inbox-setup")], input="",
+                          capture_output=True, text=True, timeout=30,
+                          env=dict(os.environ, HOME=str(home)))
+    assert proc.returncode == 1
+    assert "chmod 600" in proc.stderr and "Traceback" not in proc.stderr

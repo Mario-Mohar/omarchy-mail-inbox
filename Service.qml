@@ -110,7 +110,8 @@ Item {
     return a && a.uidvalidity ? String(a.uidvalidity) : ""
   }
 
-  // Opens the account setup helper in the user's terminal.
+  // Opens the account setup helper in the user's terminal. With no mailbox
+  // configured yet, mail-inbox-setup hands over to `mail-inbox-account add`.
   function openSetup() {
     Quickshell.execDetached(["omarchy-launch-terminal", scriptPath("mail-inbox-setup")])
   }

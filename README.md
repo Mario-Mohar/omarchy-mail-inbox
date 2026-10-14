@@ -138,7 +138,7 @@ exists, or for adding sending to one set up before version 3.3.0.
 ## Commands
 
 ```bash
-mail-inbox-setup                  # fill in missing passwords for all mailboxes
+mail-inbox-setup                  # fill in missing passwords (starts `add` when there is no mailbox)
 mail-inbox-account add            # add a mailbox, interactively
 mail-inbox-account list           # show configured ids
 mail-inbox-account test <id>      # poll once and print the result

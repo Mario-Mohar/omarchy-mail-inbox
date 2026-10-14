@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mailcommon import load_accounts  # noqa: E402  (hardened reader)
+from mailcommon import AccountError, load_accounts  # noqa: E402  (hardened reader)
 
 CONFIG_DIR = os.path.expanduser("~/.config/omarchy/mail-inbox")
 ACCOUNTS_FILE = os.path.join(CONFIG_DIR, "accounts.json")
@@ -283,7 +283,10 @@ def main():
     p_test.add_argument("id")
     p_test.set_defaults(func=cmd_test)
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except AccountError as exc:
+        sys.exit(str(exc))
 
 
 if __name__ == "__main__":
