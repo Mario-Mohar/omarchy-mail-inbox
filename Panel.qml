@@ -122,6 +122,7 @@ Panel {
     service.sendReply({
       "account": detail.account,
       "uid": detail.uid,
+      "uidvalidity": String(detail.uidvalidity || service.uidValidityOf(detail.account)),
       "to": replyRecipients,
       "cc": replyCc,
       "subject": replySubject,

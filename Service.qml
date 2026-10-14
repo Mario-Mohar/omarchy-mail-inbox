@@ -229,7 +229,7 @@ Item {
   Component.onCompleted: checkDraftAvailable()
 
   // ------------------------------------------------------------- sending
-  // request: {account, to[], cc[], subject, body, inReplyTo, references, uid}
+  // request: {account, to[], cc[], subject, body, inReplyTo, references, uid, uidvalidity}
   function sendReply(request) {
     if (root.sending || !request) return
     root.sendError = ""

@@ -137,3 +137,42 @@ def test_an_oversized_root_id_does_not_crowd_out_the_newest():
     reader = load("mail-read")
     refs = reader.thread_references("<%s@x> <b@x>" % ("a" * 900), "<c@x>", limit=600)
     assert refs == "<b@x> <c@x>"
+
+
+# ---- #17: flagging the original checks UIDVALIDITY ----------------------------------
+
+class StoreConn:
+    def __init__(self):
+        self.stored = []
+
+    def uid(self, command, uid, *args):
+        self.stored.append((command, uid) + args)
+        return "OK", [b""]
+
+
+def sender_with(monkeypatch, validity):
+    helper = load("mail-send")
+    conn = StoreConn()
+    monkeypatch.setattr(helper, "connect", lambda account, readonly=True: (conn, validity))
+    monkeypatch.setattr(helper, "close", lambda c: None)
+    return helper, conn
+
+
+def test_answered_flag_is_skipped_after_a_rebuild(monkeypatch):
+    helper, conn = sender_with(monkeypatch, "200")
+    warning = helper.flag_original({"id": "work"}, {"uid": "7", "uidvalidity": "100"})
+    assert "UIDVALIDITY" in warning
+    assert conn.stored == []
+
+
+def test_answered_flag_is_set_when_the_mailbox_is_unchanged(monkeypatch):
+    helper, conn = sender_with(monkeypatch, "100")
+    assert helper.flag_original({"id": "work"}, {"uid": "7", "uidvalidity": "100"}) == ""
+    assert conn.stored == [("STORE", "7", "+FLAGS", "(\\Answered)")]
+
+
+def test_the_panel_sends_uidvalidity_with_a_reply():
+    panel = (BIN.parent / "Panel.qml").read_text(encoding="utf-8")
+    request = panel[panel.index("service.sendReply({"):]
+    request = request[:request.index("})")]
+    assert '"uidvalidity":' in request

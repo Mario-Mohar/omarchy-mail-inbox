@@ -197,6 +197,9 @@ def fetch(account, uid, expect_validity):
             "truncated": bool(size and size > len(header_bytes) + MAX_BODY_BYTES),
             "messageId": decode_field(message.get("Message-ID", ""), limit=0),
             "references": references,
+            # The mailbox generation this UID was read under. A reply hands it
+            # back to mail-send, so flagging the original can check it.
+            "uidvalidity": validity,
             "replyTo": reply_to,
             "replyAllCc": cc_all,
             "error": "",

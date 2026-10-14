@@ -6,7 +6,8 @@ process on the machine, and the same rule that keeps passwords off the
 command line applies to what the user wrote.
 
 Request fields: account, to[], cc[], subject, body, inReplyTo, references,
-uid (the message being answered), markAnswered, markSeen.
+uid (the message being answered), uidvalidity (of its mailbox), markAnswered,
+markSeen.
 """
 import email.message
 import email.utils
@@ -156,9 +157,16 @@ def flag_original(account, request):
         flags.append("\\Seen")
     if not flags:
         return ""
+    expect_validity = str(request.get("uidvalidity", "")).strip()
     conn = None
     try:
-        conn, _ = connect(account, readonly=False)
+        conn, validity = connect(account, readonly=False)
+        # Same rule as mail-mark: after a rebuild the UID names another message,
+        # and the flag would land on that one. The mail is out either way, so
+        # this only skips the flag and says so.
+        if expect_validity and validity and expect_validity != validity:
+            return ("sent, but the mailbox was rebuilt (UIDVALIDITY changed),"
+                    " so the original was not flagged")
         status, _ = conn.uid("STORE", uid, "+FLAGS", "(%s)" % " ".join(flags))
         return "" if status == "OK" else "sent, but the original stayed unflagged"
     except Exception as exc:
