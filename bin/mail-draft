@@ -11,6 +11,7 @@ notes (what the user already typed), signature, model.
 """
 import json
 import os
+import signal
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,7 +21,16 @@ from mailcommon import emit
 MAX_REQUEST_BYTES = 256 * 1024
 
 
+def cancelled(signum, frame):
+    # Escape in the panel sends SIGTERM. Turning it into SystemExit lets
+    # draft() stop the CLI it started and remove its temporary directory on
+    # the way out, instead of the process dying with both left behind.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise SystemExit(128 + signum)
+
+
 def main():
+    signal.signal(signal.SIGTERM, cancelled)
     if "--check" in sys.argv[1:]:
         emit({"available": find_claude() is not None})
         return

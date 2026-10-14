@@ -8,9 +8,11 @@ the CLI down, and what the panel sees when the CLI misbehaves.
 
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import maildraft
@@ -187,3 +189,47 @@ def test_helper_bad_json(tmp_path, monkeypatch):
     path = fake_claude(tmp_path, monkeypatch, "echo")
     env = dict(os.environ, MAIL_DRAFT_CLAUDE=str(path))
     assert run_helper([], "{not json", env)["error"] == "request is not valid JSON"
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def wait_for(condition, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_cancelling_stops_claude_and_removes_the_directory(tmp_path, monkeypatch):
+    """Escape sends SIGTERM to mail-draft. The CLI and its children must end
+    with it, and the private directory must not stay behind."""
+    pids = tmp_path / "pids"
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    # A child of the CLI, the way a real claude would start helpers of its own.
+    path = fake_claude(tmp_path, monkeypatch,
+                       'cat >/dev/null; sleep 30 & echo $$ $! > "%s"; wait' % pids)
+    env = dict(os.environ, MAIL_DRAFT_CLAUDE=str(path), TMPDIR=str(scratch))
+    proc = subprocess.Popen([sys.executable, str(BIN / "mail-draft")], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, text=True, env=env)
+    proc.stdin.write(json.dumps(request()))
+    proc.stdin.close()
+    try:
+        assert wait_for(lambda: pids.exists() and len(pids.read_text().split()) == 2)
+        assert list(scratch.glob("mail-draft-*"))
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    children = [int(p) for p in pids.read_text().split()]
+    assert wait_for(lambda: not any(alive(p) for p in children))
+    assert not list(scratch.glob("mail-draft-*"))
