@@ -87,6 +87,10 @@ def structure(conn, uid):
         leaves = fetch_parts(conn, uid)
     except PartError:
         return None, False
+    except Exception:
+        # The body is already here. A structure this parser trips over costs
+        # the attachment list, not the whole message.
+        return None, False
     found = attachments(leaves)[:MAX_ATTACHMENT_NAMES]
     parts = [{"index": i,
               "name": decode_field(p["name"] or "(unnamed)", limit=120),

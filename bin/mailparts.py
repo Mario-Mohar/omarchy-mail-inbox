@@ -153,8 +153,17 @@ def _rfc2231(params, key):
         for index, (text, encoded) in enumerate(pieces):
             if encoded and index == 0 and text.count("'") >= 2:
                 charset, _, text = text.split("'", 2)
-            raw += urllib.parse.unquote(text, encoding=charset or "utf-8", errors="replace") \
-                if encoded else text
+            if not encoded:
+                raw += text
+                continue
+            try:
+                raw += urllib.parse.unquote(text, encoding=charset or "utf-8",
+                                            errors="replace")
+            except LookupError:
+                # A charset Python does not know. Same fallback as
+                # _decode_2231: one odd name must not make the message unreadable.
+                charset = "utf-8"
+                raw += urllib.parse.unquote(text, errors="replace")
         return raw
     if key in params:
         return decode_field(params[key], limit=0)
