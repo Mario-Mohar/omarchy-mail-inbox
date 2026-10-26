@@ -37,6 +37,37 @@ MAX_ATTACHMENT_NAMES = 25
 
 # imaplib refuses very long lines by default; some servers send big FLAGS runs.
 imaplib._MAXLINE = max(imaplib._MAXLINE, 200000)
+
+# Literal bytes one IMAP command may receive. imaplib reads every literal the
+# server announces in full, so without a cap a hostile server could stream one
+# until memory runs out. Headers and the 256 KB body preview fit easily; an
+# attachment fetch raises the budget to its own limit for that one command.
+MAX_LITERAL_BYTES = 2 * 1024 * 1024
+
+
+class _BoundedLiterals:
+    literal_budget = MAX_LITERAL_BYTES
+    _literal_bytes = 0
+
+    def _command(self, name, *args):
+        self._literal_bytes = 0
+        return super()._command(name, *args)
+
+    def read(self, size):
+        # imaplib only calls read() for literals, with the announced size.
+        self._literal_bytes += size
+        if self._literal_bytes > self.literal_budget:
+            raise self.abort("server sent more than %d bytes for one command"
+                             % self.literal_budget)
+        return super().read(size)
+
+
+class BoundedIMAP4(_BoundedLiterals, imaplib.IMAP4):
+    pass
+
+
+class BoundedIMAP4_SSL(_BoundedLiterals, imaplib.IMAP4_SSL):
+    pass
 socket.setdefaulttimeout(CONNECT_TIMEOUT)
 
 
@@ -190,10 +221,10 @@ def connect(account, readonly=True, folder=None):
     context = ssl.create_default_context()
     try:
         if starttls:
-            conn = imaplib.IMAP4(host, port)
+            conn = BoundedIMAP4(host, port)
             conn.starttls(ssl_context=context)
         else:
-            conn = imaplib.IMAP4_SSL(host, port, ssl_context=context)
+            conn = BoundedIMAP4_SSL(host, port, ssl_context=context)
         conn.login(user, password)
     except imaplib.IMAP4.error as exc:
         raise_imap(exc)

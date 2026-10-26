@@ -253,3 +253,90 @@ def test_emit_refuses_a_document_over_the_cap(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {
         "error": "response too large, refusing to emit"
     }
+
+
+def _fake_imap_server(literal_size, body_chunks):
+    """A one-shot IMAP server that answers any FETCH with one literal.
+
+    It announces `literal_size` bytes and then sends `body_chunks` chunks of
+    64 KB, recording how much it got out before the client hung up.
+    """
+    import socket
+    import threading
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    sent = []
+
+    def serve():
+        conn, _ = listener.accept()
+        reader = conn.makefile("rb")
+        try:
+            conn.sendall(b"* OK ready\r\n")
+            while True:
+                line = reader.readline()
+                if not line:
+                    break
+                tag, command = line.rstrip(b"\r\n").split(b" ", 2)[:2]
+                if command.upper() == b"CAPABILITY":
+                    conn.sendall(b"* CAPABILITY IMAP4rev1\r\n" + tag + b" OK done\r\n")
+                    continue
+                conn.sendall(b"* 1 FETCH (UID 1 BODY[HEADER] {%d}\r\n" % literal_size)
+                chunk = b"x" * 65536
+                for _ in range(body_chunks):
+                    conn.sendall(chunk)
+                    sent.append(len(chunk))
+                conn.sendall(b")\r\n" + tag + b" OK done\r\n")
+        except OSError:
+            pass
+        finally:
+            conn.close()
+            listener.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener.getsockname()[1], sent
+
+
+def _connect(port):
+    conn = mailcommon.BoundedIMAP4("127.0.0.1", port)
+    conn.state = "SELECTED"  # skip login and select, the server does not care
+    return conn
+
+
+def test_an_oversized_literal_is_refused_before_it_is_read():
+    import imaplib
+
+    size = 1024 * 1024 * 1024
+    port, sent = _fake_imap_server(size, size // 65536)
+    conn = _connect(port)
+    try:
+        with pytest.raises(imaplib.IMAP4.abort):
+            conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
+    finally:
+        conn.shutdown()
+    # Only what the socket buffers took before the client gave up.
+    assert sum(sent) < 64 * 1024 * 1024
+
+
+def test_a_literal_within_the_budget_is_read():
+    port, _ = _fake_imap_server(4 * 65536, 4)
+    conn = _connect(port)
+    try:
+        status, payload = conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
+    finally:
+        conn.shutdown()
+    assert status == "OK"
+    assert len(payload[0][1]) == 4 * 65536
+
+
+def test_the_literal_budget_is_per_command():
+    port, _ = _fake_imap_server(4 * 65536, 4)
+    conn = _connect(port)
+    conn.literal_budget = 5 * 65536
+    try:
+        for _ in range(3):
+            status, _payload = conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
+            assert status == "OK"
+    finally:
+        conn.shutdown()
