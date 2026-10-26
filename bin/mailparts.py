@@ -417,8 +417,15 @@ def fetch_section(conn, uid, part, decoded_limit):
     if not re.match(r"^\d+(\.\d+)*$", part["section"]):
         raise PartError("invalid part number")
     limit = encoded_limit(decoded_limit, part["encoding"]) + 1
-    status, payload = conn.uid("FETCH", str(uid),
-                               "(BODY.PEEK[%s]<0.%d>)" % (part["section"], limit))
+    previous = getattr(conn, "literal_budget", None)
+    if previous is not None:
+        conn.literal_budget = max(previous, limit + 64 * 1024)
+    try:
+        status, payload = conn.uid("FETCH", str(uid),
+                                   "(BODY.PEEK[%s]<0.%d>)" % (part["section"], limit))
+    finally:
+        if previous is not None:
+            conn.literal_budget = previous
     if status != "OK" or not payload:
         raise PartError("part %s could not be fetched" % part["section"])
     raw = b""
