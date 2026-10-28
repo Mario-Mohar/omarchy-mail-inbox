@@ -38,35 +38,58 @@ MAX_ATTACHMENT_NAMES = 25
 # imaplib refuses very long lines by default; some servers send big FLAGS runs.
 imaplib._MAXLINE = max(imaplib._MAXLINE, 200000)
 
-# Literal bytes one IMAP command may receive. imaplib reads every literal the
-# server announces in full, so without a cap a hostile server could stream one
-# until memory runs out. Headers and the 256 KB body preview fit easily; an
-# attachment fetch raises the budget to its own limit for that one command.
-MAX_LITERAL_BYTES = 2 * 1024 * 1024
+# Bytes one IMAP command may receive, literals and response lines together.
+# imaplib keeps every untagged response until the command completes and reads
+# every literal the server announces in full, so without a cap a hostile server
+# could stream either until memory runs out. Headers and the 256 KB body
+# preview fit easily; an attachment fetch raises the budget to its own limit
+# for that one command.
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+# Response lines over the whole connection. Untagged responses a command does
+# not ask for can pile up across commands, and real line traffic is small:
+# message content arrives in literals, which the per-command budget covers.
+MAX_CONNECTION_LINE_BYTES = 8 * 1024 * 1024
 
 
-class _BoundedLiterals:
-    literal_budget = MAX_LITERAL_BYTES
-    _literal_bytes = 0
+class _BoundedResponses:
+    response_budget = MAX_RESPONSE_BYTES
+    _response_bytes = 0
+    _line_bytes = 0
 
     def _command(self, name, *args):
-        self._literal_bytes = 0
+        self._response_bytes = 0
         return super()._command(name, *args)
 
+    def _count(self, size, line):
+        self._response_bytes += size
+        if line:
+            self._line_bytes += size
+        if (self._response_bytes > self.response_budget
+                or self._line_bytes > MAX_CONNECTION_LINE_BYTES):
+            # Drop the connection right away rather than read any more of it.
+            try:
+                self.shutdown()
+            except OSError:
+                pass
+            raise self.abort("server sent more than the response limit")
+
     def read(self, size):
-        # imaplib only calls read() for literals, with the announced size.
-        self._literal_bytes += size
-        if self._literal_bytes > self.literal_budget:
-            raise self.abort("server sent more than %d bytes for one command"
-                             % self.literal_budget)
+        # imaplib only calls read() for literals, with the announced size, so
+        # an oversized one is refused before any of it is read.
+        self._count(size, line=False)
         return super().read(size)
 
+    def readline(self):
+        line = super().readline()
+        self._count(len(line), line=True)
+        return line
 
-class BoundedIMAP4(_BoundedLiterals, imaplib.IMAP4):
+
+class BoundedIMAP4(_BoundedResponses, imaplib.IMAP4):
     pass
 
 
-class BoundedIMAP4_SSL(_BoundedLiterals, imaplib.IMAP4_SSL):
+class BoundedIMAP4_SSL(_BoundedResponses, imaplib.IMAP4_SSL):
     pass
 socket.setdefaulttimeout(CONNECT_TIMEOUT)
 

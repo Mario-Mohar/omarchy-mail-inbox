@@ -298,6 +298,14 @@ def _fake_imap_server(literal_size, body_chunks):
     return listener.getsockname()[1], sent
 
 
+def _hang_up(conn):
+    # The client may already have dropped the connection on overflow.
+    try:
+        conn.shutdown()
+    except OSError:
+        pass
+
+
 def _connect(port):
     conn = mailcommon.BoundedIMAP4("127.0.0.1", port)
     conn.state = "SELECTED"  # skip login and select, the server does not care
@@ -314,7 +322,7 @@ def test_an_oversized_literal_is_refused_before_it_is_read():
         with pytest.raises(imaplib.IMAP4.abort):
             conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
     finally:
-        conn.shutdown()
+        _hang_up(conn)
     # Only what the socket buffers took before the client gave up.
     assert sum(sent) < 64 * 1024 * 1024
 
@@ -325,18 +333,72 @@ def test_a_literal_within_the_budget_is_read():
     try:
         status, payload = conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
     finally:
-        conn.shutdown()
+        _hang_up(conn)
     assert status == "OK"
     assert len(payload[0][1]) == 4 * 65536
 
 
-def test_the_literal_budget_is_per_command():
+def test_the_response_budget_is_per_command():
     port, _ = _fake_imap_server(4 * 65536, 4)
     conn = _connect(port)
-    conn.literal_budget = 5 * 65536
+    conn.response_budget = 5 * 65536
     try:
         for _ in range(3):
             status, _payload = conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
             assert status == "OK"
     finally:
-        conn.shutdown()
+        _hang_up(conn)
+
+
+def _flooding_imap_server(line_count):
+    """Answers any command with `line_count` untagged OK lines and no completion."""
+    import socket
+    import threading
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    sent = []
+
+    def serve():
+        conn, _ = listener.accept()
+        reader = conn.makefile("rb")
+        try:
+            conn.sendall(b"* OK ready\r\n")
+            while True:
+                line = reader.readline()
+                if not line:
+                    break
+                tag, command = line.rstrip(b"\r\n").split(b" ", 2)[:2]
+                if command.upper() == b"CAPABILITY":
+                    conn.sendall(b"* CAPABILITY IMAP4rev1\r\n" + tag + b" OK done\r\n")
+                    continue
+                filler = b"* OK " + b"x" * 1000 + b"\r\n"
+                for _ in range(line_count):
+                    conn.sendall(filler)
+                    sent.append(len(filler))
+        except OSError:
+            pass
+        finally:
+            conn.close()
+            listener.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener.getsockname()[1], sent
+
+
+def test_endless_untagged_lines_are_cut_off():
+    """Each line is valid and short; their sum must still be bounded."""
+    import imaplib
+
+    port, sent = _flooding_imap_server(1_000_000)
+    conn = _connect(port)
+    try:
+        with pytest.raises(imaplib.IMAP4.abort):
+            conn.uid("FETCH", "1", "(BODY.PEEK[HEADER])")
+    finally:
+        _hang_up(conn)
+    held = sum(len(line) for line in conn.untagged_responses.get("OK", []))
+    assert held <= mailcommon.MAX_RESPONSE_BYTES
+    # Only what the socket buffers took before the client hung up.
+    assert sum(sent) < 64 * 1024 * 1024
